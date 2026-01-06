@@ -6,54 +6,54 @@ sprint_plan_path: "docs/sprint-plan-fizzy-chrome-2026-01-06.md"
 
 sprints:
   - sprint_number: 1
-    status: "not_started"
+    status: "completed"
     goal: "Deliver complete Fizzy Chrome Extension MVP"
     committed_points: 34
-    completed_points: 0
+    completed_points: 34
     stories:
       - story_id: "STORY-001"
         title: "Project Setup & Extension Scaffold"
         points: 3
-        status: "not_started"
+        status: "completed"
         order: 1
       - story_id: "STORY-002"
         title: "Authentication & API Key Management"
         points: 5
-        status: "not_started"
+        status: "completed"
         order: 2
       - story_id: "STORY-003"
         title: "Screenshot Capture"
         points: 3
-        status: "not_started"
+        status: "completed"
         order: 3
       - story_id: "STORY-006"
         title: "Metadata Capture"
         points: 2
-        status: "not_started"
+        status: "completed"
         order: 4
       - story_id: "STORY-004"
         title: "Annotation Tools"
         points: 8
-        status: "not_started"
+        status: "completed"
         order: 5
       - story_id: "STORY-005"
         title: "Board Selection"
         points: 5
-        status: "not_started"
+        status: "completed"
         order: 6
       - story_id: "STORY-007"
         title: "Card Submission"
         points: 5
-        status: "not_started"
+        status: "completed"
         order: 7
       - story_id: "STORY-008"
         title: "Polish & Error Handling"
         points: 3
-        status: "not_started"
+        status: "completed"
         order: 8
 
 velocity:
-  sprint_1: null
-  rolling_average: null
+  sprint_1: 34
+  rolling_average: 34
 
 last_updated: "2026-01-06"
