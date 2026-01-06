@@ -19,6 +19,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
         options: resolve(__dirname, 'src/options/index.html'),
+        annotate: resolve(__dirname, 'src/annotate/index.html'),
       },
     },
   },
