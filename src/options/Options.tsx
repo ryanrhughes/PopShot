@@ -115,9 +115,8 @@ export function Options() {
             <h3>How to get your API key:</h3>
             <ol>
               <li>Go to <a href="https://app.fizzy.do" target="_blank" rel="noopener noreferrer">app.fizzy.do</a> and sign in</li>
-              <li>Click your profile picture in the top-right corner</li>
-              <li>Go to the <strong>API</strong> section</li>
-              <li>Click <strong>Personal access tokens</strong></li>
+              <li>Navigate to <strong>My Profile</strong></li>
+              <li>Under the <strong>Developer</strong> heading, click <strong>Personal access tokens</strong></li>
               <li>Click <strong>Generate new access token</strong></li>
               <li>Give it a description (e.g., "Chrome Extension")</li>
               <li>Select <strong>Read + Write</strong> permission</li>
