@@ -37,13 +37,15 @@ export function AnnotatePage() {
   const [isDrawing, setIsDrawing] = useState(false)
   const [selectedBoard, setSelectedBoard] = useState<{ slug: string; id: string; name: string } | null>(null)
   const [cardTitle, setCardTitle] = useState('')
+  const [cardDescription, setCardDescription] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [cardUrl, setCardUrl] = useState<string | null>(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
+  const [annotatedImageData, setAnnotatedImageData] = useState<string | null>(null)
   
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<Canvas | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
   const drawingStartRef = useRef<{ x: number; y: number } | null>(null)
   const currentShapeRef = useRef<Line | Rect | Circle | null>(null)
   const historyRef = useRef<string[]>([])
@@ -78,18 +80,18 @@ export function AnnotatePage() {
 
   // Calculate canvas size based on image and container
   useEffect(() => {
-    if (!imageDataUrl || !containerRef.current) return
+    if (!imageDataUrl || !canvasContainerRef.current) return
 
     const img = new Image()
     img.onload = () => {
-      const container = containerRef.current!
-      const containerWidth = container.clientWidth - 48 // padding
-      const containerHeight = window.innerHeight - 200 // leave room for toolbar and submit
+      const container = canvasContainerRef.current!
+      const containerWidth = container.clientWidth - 32
+      const containerHeight = container.clientHeight - 32
 
       const scale = Math.min(
         containerWidth / img.width,
         containerHeight / img.height,
-        1 // Don't scale up
+        1
       )
 
       setCanvasSize({
@@ -364,9 +366,24 @@ export function AnnotatePage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleUndo, handleRedo, handleDelete])
 
-  // Submit
+  // Submit - capture image data first, then submit
   const handleSubmit = async () => {
-    if (!fabricRef.current || !selectedBoard || !metadata) return
+    if (!selectedBoard || !metadata) {
+      setError('Please select a board')
+      return
+    }
+
+    // Capture the annotated image BEFORE changing state
+    let imageData = annotatedImageData
+    if (!imageData && fabricRef.current) {
+      imageData = fabricRef.current.toDataURL({ format: 'png', quality: 1, multiplier: 2 })
+      setAnnotatedImageData(imageData)
+    }
+
+    if (!imageData) {
+      setError('Failed to capture annotated image')
+      return
+    }
 
     setState('submitting')
     setError(null)
@@ -375,16 +392,22 @@ export function AnnotatePage() {
       const apiKey = await getApiKey()
       if (!apiKey) throw new Error('No API key found')
 
-      const annotatedImage = fabricRef.current.toDataURL({ format: 'png', quality: 1, multiplier: 2 })
+      // Build description with user content and metadata
       const metadataHtml = formatMetadataAsHtml(metadata)
+      let fullDescription = ''
+      if (cardDescription.trim()) {
+        fullDescription = `<p>${cardDescription.replace(/\n/g, '</p><p>')}</p><hr>${metadataHtml}`
+      } else {
+        fullDescription = metadataHtml
+      }
 
       const result = await uploadImageAndCreateCard(
         apiKey,
         selectedBoard.slug,
         selectedBoard.id,
-        annotatedImage,
+        imageData,
         cardTitle || generateDefaultTitle(metadata),
-        metadataHtml
+        fullDescription
       )
 
       // Clear session data
@@ -395,7 +418,7 @@ export function AnnotatePage() {
     } catch (err) {
       console.error('Submit error:', err)
       setError(err instanceof Error ? err.message : 'Failed to create card')
-      setState('error')
+      setState('annotating') // Go back to annotating state so user can retry
     }
   }
 
@@ -404,7 +427,7 @@ export function AnnotatePage() {
     window.close()
   }
 
-  // Render
+  // Render loading state
   if (state === 'loading') {
     return (
       <div className="page loading-page">
@@ -414,6 +437,7 @@ export function AnnotatePage() {
     )
   }
 
+  // Render success state
   if (state === 'success') {
     return (
       <div className="page success-page">
@@ -434,6 +458,7 @@ export function AnnotatePage() {
     )
   }
 
+  // Render error state (no image)
   if (state === 'error' && !imageDataUrl) {
     return (
       <div className="page error-page">
@@ -449,18 +474,11 @@ export function AnnotatePage() {
     )
   }
 
+  // Main annotate view
   return (
     <div className="page annotate-page">
-      {/* Header */}
-      <header className="page-header">
-        <h1>Annotate Screenshot</h1>
-        <div className="header-actions">
-          <button className="secondary-btn" onClick={handleCancel}>Cancel</button>
-        </div>
-      </header>
-
-      {/* Main content */}
-      <div className="page-content" ref={containerRef}>
+      {/* Left: Canvas area */}
+      <div className="canvas-area">
         {/* Toolbar */}
         <div className="toolbar">
           <div className="tool-section">
@@ -528,55 +546,94 @@ export function AnnotatePage() {
         </div>
 
         {/* Canvas */}
-        <div className="canvas-wrapper">
+        <div className="canvas-container" ref={canvasContainerRef}>
           <canvas ref={canvasRef} />
         </div>
+      </div>
 
-        {/* Submit panel */}
-        <div className="submit-panel">
-          {state === 'error' && error && (
+      {/* Right: Sidebar with form */}
+      <div className="sidebar">
+        <div className="sidebar-header">
+          <h2>Submit Feedback</h2>
+        </div>
+
+        <div className="sidebar-content">
+          {error && (
             <div className="error-message">{error}</div>
           )}
-          
-          <div className="submit-row">
-            <div className="form-group title-group">
-              <label htmlFor="card-title">Title</label>
-              <input
-                type="text"
-                id="card-title"
-                value={cardTitle}
-                onChange={(e) => setCardTitle(e.target.value)}
-                placeholder="Feedback title"
-                disabled={state === 'submitting'}
-              />
-            </div>
 
-            <div className="form-group board-group">
-              <BoardSelector
-                currentUrl={metadata?.url}
-                onSelect={(slug, id, name) => setSelectedBoard({ slug, id, name })}
-                disabled={state === 'submitting'}
-              />
-            </div>
-
-            <button
-              className="submit-btn"
-              onClick={handleSubmit}
-              disabled={state === 'submitting' || !selectedBoard}
-            >
-              {state === 'submitting' ? (
-                <>
-                  <span className="spinner-small" />
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  <SendIcon />
-                  Submit to Fizzy
-                </>
-              )}
-            </button>
+          <div className="form-group">
+            <label htmlFor="card-title">Title *</label>
+            <input
+              type="text"
+              id="card-title"
+              value={cardTitle}
+              onChange={(e) => setCardTitle(e.target.value)}
+              placeholder="Brief summary of the feedback"
+              disabled={state === 'submitting'}
+            />
           </div>
+
+          <div className="form-group">
+            <label htmlFor="card-description">Description</label>
+            <textarea
+              id="card-description"
+              value={cardDescription}
+              onChange={(e) => setCardDescription(e.target.value)}
+              placeholder="Add more details about this feedback..."
+              rows={5}
+              disabled={state === 'submitting'}
+            />
+          </div>
+
+          <div className="form-group">
+            <BoardSelector
+              currentUrl={metadata?.url}
+              onSelect={(slug, id, name) => setSelectedBoard({ slug, id, name })}
+              disabled={state === 'submitting'}
+            />
+          </div>
+
+          {metadata && (
+            <div className="metadata-preview">
+              <h4>Auto-captured Info</h4>
+              <div className="metadata-item">
+                <span className="label">URL:</span>
+                <span className="value" title={metadata.url}>{metadata.url}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Browser:</span>
+                <span className="value">{metadata.browser} {metadata.browserVersion}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Viewport:</span>
+                <span className="value">{metadata.viewportWidth} x {metadata.viewportHeight}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="sidebar-footer">
+          <button className="cancel-btn" onClick={handleCancel} disabled={state === 'submitting'}>
+            Cancel
+          </button>
+          <button
+            className="submit-btn"
+            onClick={handleSubmit}
+            disabled={state === 'submitting' || !selectedBoard || !cardTitle.trim()}
+          >
+            {state === 'submitting' ? (
+              <>
+                <span className="spinner-small" />
+                Submitting...
+              </>
+            ) : (
+              <>
+                <SendIcon />
+                Submit to Fizzy
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>
