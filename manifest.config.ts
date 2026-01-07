@@ -47,10 +47,9 @@ export default defineManifest({
     'contextMenus',   // Right-click menu for History/Settings
   ],
 
-  // Host permissions for Fizzy API
+  // Host permissions for Fizzy API (required for service worker fetch requests)
   host_permissions: [
     'https://app.fizzy.do/*',
-    'https://*.fizzy.do/*',
   ],
 
   // Declarative net request rules to fix Origin header
