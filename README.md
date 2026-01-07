@@ -2,6 +2,14 @@
 
 A Chrome browser extension for capturing, annotating, and sending screenshot feedback directly to [Fizzy](https://fizzy.do).
 
+## Screenshots
+
+![Annotation Editor](screenshots/annotation-editor.png)
+*Capture screenshots, annotate with arrows, shapes, text, and pixelation, then submit directly to Fizzy*
+
+![Fizzy Card](screenshots/fizzy-card.png)
+*Feedback appears as a trackable card in Fizzy with all context preserved*
+
 ## Features
 
 - **Screenshot Capture** - Capture the visible viewport of any webpage
