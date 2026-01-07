@@ -1,7 +1,7 @@
 {
-  "name": "fizzy-chrome",
+  "name": "popshot",
   "version": "0.1.0",
-  "description": "Chrome extension for capturing and submitting feedback to Fizzy",
+  "description": "Capture, annotate, and submit screenshots as feedback",
   "type": "module",
   "scripts": {
     "dev": "vite",

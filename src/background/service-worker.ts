@@ -1,5 +1,5 @@
 /**
- * Background service worker for Fizzy Feedback extension
+ * Background service worker for PopShot extension
  * Handles screenshot capture, API requests, and coordinates messaging between components
  */
 
@@ -412,4 +412,4 @@ async function addToHistory(title: string, cardUrl: string) {
 }
 
 // Log when service worker starts
-console.log('Fizzy Feedback service worker started')
+console.log('PopShot service worker started')

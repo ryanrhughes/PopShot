@@ -60,7 +60,7 @@ export function Popup() {
   return (
     <div className="popup">
       <header className="popup-header">
-        <h1>Fizzy Feedback</h1>
+        <h1>PopShot</h1>
         <button className="settings-btn" onClick={openOptions} title="Settings">
           <SettingsIcon />
         </button>
@@ -76,8 +76,8 @@ export function Popup() {
 
         {state === 'no-api-key' && (
           <div className="setup-section">
-            <p>Welcome to Fizzy Feedback!</p>
-            <p className="hint">Please configure your Fizzy API key to get started.</p>
+            <p>Welcome to PopShot!</p>
+            <p className="hint">Please configure your API key to get started.</p>
             <button className="primary-btn" onClick={openOptions}>
               Set Up API Key
             </button>
@@ -87,7 +87,7 @@ export function Popup() {
         {state === 'idle' && (
           <div className="capture-section">
             <p className="description">
-              Capture a screenshot and send feedback to Fizzy.
+              Capture a screenshot and send feedback directly to Fizzy.
             </p>
             {error && (
               <div className="error-banner">

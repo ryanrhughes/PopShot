@@ -100,7 +100,7 @@ export function Options() {
   return (
     <div className="options">
       <header className="options-header">
-        <h1>Fizzy Feedback Settings</h1>
+        <h1>PopShot Settings</h1>
         <p className="subtitle">Configure your Fizzy API connection</p>
       </header>
 
@@ -108,7 +108,7 @@ export function Options() {
         <section className="section">
           <h2>API Key</h2>
           <p className="help-text">
-            To use this extension, you need a Fizzy Personal Access Token with Read + Write permissions.
+            PopShot sends feedback directly to Fizzy. You'll need a Fizzy Personal Access Token with Read + Write permissions.
           </p>
 
           <div className="api-key-instructions">
@@ -180,7 +180,7 @@ export function Options() {
       </main>
 
       <footer className="options-footer">
-        <p>Fizzy Feedback Extension v0.1.0</p>
+        <p>PopShot v0.1.0</p>
       </footer>
     </div>
   )

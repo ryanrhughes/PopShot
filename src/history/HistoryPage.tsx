@@ -55,7 +55,7 @@ export function HistoryPage() {
         ) : history.length === 0 ? (
           <div className="empty-state">
             <p>No submissions yet.</p>
-            <p className="hint">Click the Fizzy icon to capture a screenshot and submit feedback.</p>
+            <p className="hint">Click the PopShot icon to capture a screenshot and submit feedback.</p>
           </div>
         ) : (
           <ul className="history-list">
