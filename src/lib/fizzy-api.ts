@@ -253,29 +253,19 @@ export async function uploadFile(
   headers: Record<string, string>,
   fileData: Blob
 ): Promise<void> {
-  console.log('[Fizzy] Uploading file to S3:', uploadUrl)
-  console.log('[Fizzy] Upload headers:', headers)
-  console.log('[Fizzy] File size:', fileData.size)
-  
   const response = await fetch(uploadUrl, {
     method: 'PUT',
     headers,
     body: fileData,
   })
   
-  console.log('[Fizzy] S3 upload response:', response.status, response.statusText)
-  
   if (!response.ok) {
-    const text = await response.text()
-    console.error('[Fizzy] S3 upload error body:', text)
     throw new FizzyApiError(
       `Upload failed: ${response.status} ${response.statusText}`,
       response.status,
       response.statusText
     )
   }
-  
-  console.log('[Fizzy] S3 upload SUCCESS')
 }
 
 /**
@@ -292,20 +282,13 @@ export async function createCard(
   }
 ): Promise<Card> {
   const slug = normalizeSlug(accountSlug)
-  // POST to /boards/:board_id/cards per API spec
   const url = `${FIZZY_API_BASE}/${slug}/boards/${boardId}/cards`
-  const body = JSON.stringify({ card })
-  
-  console.log('[Fizzy] Card creation URL:', url)
-  console.log('[Fizzy] Card creation body:', body)
   
   const { data, location } = await swFetch(url, {
     method: 'POST',
     headers: createHeaders(apiKey),
-    body,
+    body: JSON.stringify({ card }),
   })
-  
-  console.log('[Fizzy] Card created, data:', data, 'location:', location)
   
   // If we got data back, return it
   if (data) {
@@ -374,8 +357,6 @@ export async function uploadImageAndCreateCard(
   
   const filename = `screenshot-${Date.now()}.png`
   
-  console.log('[Fizzy] Creating direct upload for:', filename, 'size:', blob.size, 'checksum:', checksum)
-  
   // Create direct upload
   const directUpload = await createDirectUpload(apiKey, accountSlug, {
     filename,
@@ -383,8 +364,6 @@ export async function uploadImageAndCreateCard(
     checksum,
     contentType: blob.type,
   })
-  
-  console.log('[Fizzy] Direct upload response:', directUpload)
   
   // Upload the file to S3
   await uploadFile(directUpload.direct_upload.url, directUpload.direct_upload.headers, blob)
@@ -395,16 +374,11 @@ ${metadata}
 <action-text-attachment sgid="${directUpload.attachable_sgid}" content-type="${blob.type}" filename="${filename}"></action-text-attachment>
 `.trim()
 
-  console.log('[Fizzy] Creating card with description:', description)
-  console.log('[Fizzy] Tag IDs:', tags)
-
   const card = await createCard(apiKey, accountSlug, boardId, {
     title,
     description,
     tag_ids: tags && tags.length > 0 ? tags : undefined,
   })
-  
-  console.log('[Fizzy] Card payload included tag_ids:', tags && tags.length > 0 ? tags : 'none')
   
   return { card, cardUrl: card.url }
 }

@@ -150,17 +150,6 @@ interface ApiResult {
 async function handleApiRequest(message: ApiRequestMessage): Promise<ApiResult> {
   const { method, url, headers, body } = message
   
-  console.log(`[Fizzy SW] ${method} ${url}`)
-  console.log(`[Fizzy SW] Request headers:`)
-  Object.entries(headers).forEach(([key, value]) => {
-    // Don't log full auth token
-    const displayValue = key.toLowerCase() === 'authorization' ? value.substring(0, 20) + '...' : value
-    console.log(`  ${key}: ${displayValue}`)
-  })
-  if (body) {
-    console.log(`[Fizzy SW] Body: ${body}`)
-  }
-  
   // Add Origin header matching the API to satisfy Rails CSRF protection
   // Chrome extensions with host_permissions can set custom origins
   const headersWithOrigin = {
@@ -175,25 +164,13 @@ async function handleApiRequest(message: ApiRequestMessage): Promise<ApiResult> 
     credentials: 'omit', // Don't send cookies - use only Bearer token auth
   })
   
-  console.log(`[Fizzy SW] Response: ${response.status} ${response.statusText}`)
-  
-  // Log all response headers for debugging
-  console.log(`[Fizzy SW] Response headers:`)
-  response.headers.forEach((value, key) => {
-    console.log(`  ${key}: ${value}`)
-  })
-  
   const location = response.headers.get('Location') || undefined
   
   if (!response.ok) {
-    // Read the raw response body for debugging
     const rawBody = await response.text()
-    console.log(`[Fizzy SW] Error response body: ${rawBody}`)
-    
     let errorMessage = `API error: ${response.status} ${response.statusText}`
     try {
       const errorData = JSON.parse(rawBody)
-      console.log(`[Fizzy SW] Parsed error data:`, errorData)
       if (typeof errorData === 'object' && errorData !== null) {
         errorMessage = Object.entries(errorData as Record<string, unknown>)
           .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
