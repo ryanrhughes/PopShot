@@ -204,7 +204,7 @@ export function AnnotatePage() {
     const objectsToRestore = pendingObjectsRef.current
     const cropInfo = pendingCropInfoRef.current
     
-    console.log('[Crop] Canvas init #' + thisCanvasId + ' - pending objects:', objectsToRestore?.length ?? 0)
+
 
     const canvas = new Canvas(canvasRef.current, {
       width: canvasSize.width,
@@ -241,7 +241,7 @@ export function AnnotatePage() {
       bgScaleRef.current = scale
       bgOffsetRef.current = { x: offsetX, y: offsetY }
       
-      console.log('[Crop] Background loaded - scale:', scale, 'offset:', offsetX, offsetY)
+
       
       // Store the actual HTML image element
       const htmlImg = new Image()
@@ -256,18 +256,9 @@ export function AnnotatePage() {
       // Always try to restore if we have pending objects
       // Every canvas recreation needs to restore because the previous canvas was disposed
       if (objectsToRestore && objectsToRestore.length > 0) {
-        console.log('[Crop] Canvas #' + thisCanvasId + ' - restoring objects:', objectsToRestore.length)
-        
         util.enlivenObjects(objectsToRestore).then((objects) => {
           // Check if canvas was recreated while we were enlivening objects
-          if (canvasInstanceIdRef.current !== thisCanvasId) {
-            console.log('[Crop] Canvas #' + thisCanvasId + ' was replaced by #' + canvasInstanceIdRef.current + ', skipping restore')
-            return
-          }
-          
-          if (!fabricRef.current) return
-          
-          console.log('[Crop] Canvas #' + thisCanvasId + ' - enlivened objects:', objects.length)
+          if (canvasInstanceIdRef.current !== thisCanvasId || !fabricRef.current) return
           
           const newBgOffset = bgOffsetRef.current
           
@@ -285,8 +276,6 @@ export function AnnotatePage() {
               const newLeft = originalData._relativeLeft * newBgWidth + newBgOffset.x
               const newTop = originalData._relativeTop * newBgHeight + newBgOffset.y
               
-              console.log('[Crop] Repositioning:', fabObj.type, 'to', newLeft, newTop, 'scale ratio:', scaleRatio)
-              
               fabObj.set({ 
                 left: newLeft, 
                 top: newTop,
@@ -299,14 +288,12 @@ export function AnnotatePage() {
             fabricRef.current!.add(fabObj)
           })
           
-          console.log('[Crop] Canvas #' + thisCanvasId + ' - objects on canvas after restore:', fabricRef.current.getObjects().length)
           fabricRef.current.renderAll()
           
           // Only save history once per crop (when we successfully restore to the final canvas)
           // We know we're on the final canvas if it's still the current one after a brief moment
           setTimeout(() => {
             if (canvasInstanceIdRef.current === thisCanvasId && pendingObjectsRef.current) {
-              console.log('[Crop] Canvas #' + thisCanvasId + ' is final, saving history and clearing pending')
               pendingObjectsRef.current = null
               pendingCropInfoRef.current = null
               saveHistory()
@@ -479,17 +466,13 @@ export function AnnotatePage() {
     const shiftX = cropRegion.x
     const shiftY = cropRegion.y
     
-    console.log('[Crop] Crop region:', cropRegion)
-    console.log('[Crop] Current bg scale:', scale, 'offset:', offset)
-    
     // Store the original positions relative to the crop region origin
     // These are in the current canvas coordinate system
-    const objectsRelativeToCrop = objects.map(obj => {
-      const relLeft = (obj.left || 0) - shiftX
-      const relTop = (obj.top || 0) - shiftY
-      console.log('[Crop] Object:', obj.type, 'original:', obj.left, obj.top, 'relative to crop:', relLeft, relTop)
-      return { obj, relLeft, relTop }
-    })
+    const objectsRelativeToCrop = objects.map(obj => ({
+      obj,
+      relLeft: (obj.left || 0) - shiftX,
+      relTop: (obj.top || 0) - shiftY,
+    }))
     
     // Serialize objects with adjusted positions and store scale info
     const adjustedObjects = objectsRelativeToCrop.map(({ obj, relLeft, relTop }) => {
@@ -505,14 +488,9 @@ export function AnnotatePage() {
       return objData
     })
     
-    console.log('[Crop] Objects to transfer:', objects.length, adjustedObjects)
-
     // Store adjusted objects and crop dimensions for position calculation when restoring
     pendingObjectsRef.current = adjustedObjects
     pendingCropInfoRef.current = { width: cropRegion.width, height: cropRegion.height }
-    
-    console.log('[Crop] Stored pending objects:', pendingObjectsRef.current.length)
-    console.log('[Crop] Pending objects data:', JSON.stringify(pendingObjectsRef.current, null, 2))
     
     // Update state - this will reinitialize the canvas with the cropped background
     setImageDataUrl(croppedDataUrl)
@@ -843,8 +821,6 @@ export function AnnotatePage() {
       } else {
         fullDescription = metadataHtml
       }
-
-      console.log('[Fizzy] Submitting with tag IDs:', selectedTagIds)
 
       const result = await uploadImageAndCreateCard(
         apiKey,
