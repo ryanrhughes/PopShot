@@ -396,7 +396,13 @@ export function AnnotatePage() {
       const metadataHtml = formatMetadataAsHtml(metadata)
       let fullDescription = ''
       if (cardDescription.trim()) {
-        fullDescription = `<p>${cardDescription.replace(/\n/g, '</p><p>')}</p><hr>${metadataHtml}`
+        // Escape HTML in user input and convert newlines to <br>
+        const escapedDescription = cardDescription
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>')
+        fullDescription = `<p>${escapedDescription}</p><hr>${metadataHtml}`
       } else {
         fullDescription = metadataHtml
       }

@@ -42,6 +42,7 @@ export default defineManifest({
   permissions: [
     'activeTab',      // Capture screenshot of current tab
     'storage',        // Store API key and preferences
+    'declarativeNetRequest',  // Modify request headers
   ],
 
   // Host permissions for Fizzy API
@@ -49,4 +50,13 @@ export default defineManifest({
     'https://app.fizzy.do/*',
     'https://*.fizzy.do/*',
   ],
+
+  // Declarative net request rules to fix Origin header
+  declarative_net_request: {
+    rule_resources: [{
+      id: 'fizzy_rules',
+      enabled: true,
+      path: 'rules.json',
+    }],
+  },
 })

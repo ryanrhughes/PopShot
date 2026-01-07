@@ -1,9 +1,52 @@
 /**
  * Fizzy API client for the Chrome extension
  * Handles all communication with the Fizzy API
+ * 
+ * API requests are proxied through the service worker to avoid CORS issues.
  */
 
 const FIZZY_API_BASE = 'https://app.fizzy.do'
+
+/**
+ * Make an API request through the service worker
+ * This avoids CORS issues since service workers have host_permissions
+ */
+async function swFetch(
+  url: string,
+  options: {
+    method?: string
+    headers?: Record<string, string>
+    body?: string
+  } = {}
+): Promise<{ data: unknown; location?: string }> {
+  const response = await chrome.runtime.sendMessage({
+    action: 'apiRequest',
+    method: options.method || 'GET',
+    url,
+    headers: options.headers || {},
+    body: options.body,
+  })
+  
+  // If response is undefined, the service worker didn't handle the message
+  if (response === undefined) {
+    throw new FizzyApiError(
+      'Service worker not responding. Try refreshing the extension.',
+      500,
+      'Error'
+    )
+  }
+  
+  if (!response.success) {
+    const error = new FizzyApiError(
+      response.error || 'API request failed',
+      response.status || 500,
+      'Error'
+    )
+    throw error
+  }
+  
+  return { data: response.data, location: response.location }
+}
 
 export interface Account {
   id: string
@@ -56,6 +99,7 @@ export interface DirectUploadResponse {
     headers: Record<string, string>
   }
   signed_id: string
+  attachable_sgid: string  // This is what should be used in action-text-attachment
 }
 
 export interface IdentityResponse {
@@ -76,7 +120,7 @@ export class FizzyApiError extends Error {
 /**
  * Create headers for Fizzy API requests
  */
-function createHeaders(apiKey: string): HeadersInit {
+function createHeaders(apiKey: string): Record<string, string> {
   return {
     'Authorization': `Bearer ${apiKey}`,
     'Accept': 'application/json',
@@ -85,38 +129,14 @@ function createHeaders(apiKey: string): HeadersInit {
 }
 
 /**
- * Handle API response errors
- */
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let errorMessage = `API error: ${response.status} ${response.statusText}`
-    
-    try {
-      const errorData = await response.json()
-      if (typeof errorData === 'object') {
-        errorMessage = Object.entries(errorData)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join(', ')
-      }
-    } catch {
-      // Ignore JSON parse errors
-    }
-    
-    throw new FizzyApiError(errorMessage, response.status, response.statusText)
-  }
-  
-  return response.json()
-}
-
-/**
  * Validate API key by fetching user identity
  */
 export async function validateApiKey(apiKey: string): Promise<IdentityResponse> {
-  const response = await fetch(`${FIZZY_API_BASE}/my/identity`, {
+  const { data } = await swFetch(`${FIZZY_API_BASE}/my/identity`, {
     headers: createHeaders(apiKey),
   })
   
-  return handleResponse<IdentityResponse>(response)
+  return data as IdentityResponse
 }
 
 /**
@@ -127,14 +147,22 @@ export async function getIdentity(apiKey: string): Promise<IdentityResponse> {
 }
 
 /**
+ * Normalize account slug - ensure it doesn't have leading slash
+ */
+function normalizeSlug(slug: string): string {
+  return slug.startsWith('/') ? slug.slice(1) : slug
+}
+
+/**
  * Get boards for an account
  */
 export async function getBoards(apiKey: string, accountSlug: string): Promise<Board[]> {
-  const response = await fetch(`${FIZZY_API_BASE}${accountSlug}/boards`, {
+  const slug = normalizeSlug(accountSlug)
+  const { data } = await swFetch(`${FIZZY_API_BASE}/${slug}/boards`, {
     headers: createHeaders(apiKey),
   })
   
-  return handleResponse<Board[]>(response)
+  return data as Board[]
 }
 
 /**
@@ -166,7 +194,8 @@ export async function createDirectUpload(
     contentType: string
   }
 ): Promise<DirectUploadResponse> {
-  const response = await fetch(`${FIZZY_API_BASE}${accountSlug}/rails/active_storage/direct_uploads`, {
+  const slug = normalizeSlug(accountSlug)
+  const { data } = await swFetch(`${FIZZY_API_BASE}/${slug}/rails/active_storage/direct_uploads`, {
     method: 'POST',
     headers: createHeaders(apiKey),
     body: JSON.stringify({
@@ -179,7 +208,7 @@ export async function createDirectUpload(
     }),
   })
   
-  return handleResponse<DirectUploadResponse>(response)
+  return data as DirectUploadResponse
 }
 
 /**
@@ -190,19 +219,29 @@ export async function uploadFile(
   headers: Record<string, string>,
   fileData: Blob
 ): Promise<void> {
+  console.log('[Fizzy] Uploading file to S3:', uploadUrl)
+  console.log('[Fizzy] Upload headers:', headers)
+  console.log('[Fizzy] File size:', fileData.size)
+  
   const response = await fetch(uploadUrl, {
     method: 'PUT',
     headers,
     body: fileData,
   })
   
+  console.log('[Fizzy] S3 upload response:', response.status, response.statusText)
+  
   if (!response.ok) {
+    const text = await response.text()
+    console.error('[Fizzy] S3 upload error body:', text)
     throw new FizzyApiError(
       `Upload failed: ${response.status} ${response.statusText}`,
       response.status,
       response.statusText
     )
   }
+  
+  console.log('[Fizzy] S3 upload SUCCESS')
 }
 
 /**
@@ -217,25 +256,36 @@ export async function createCard(
     description?: string
   }
 ): Promise<Card> {
-  const response = await fetch(`${FIZZY_API_BASE}${accountSlug}/boards/${boardId}/cards`, {
+  const slug = normalizeSlug(accountSlug)
+  // POST to /boards/:board_id/cards per API spec
+  const url = `${FIZZY_API_BASE}/${slug}/boards/${boardId}/cards`
+  const body = JSON.stringify({ card })
+  
+  console.log('[Fizzy] Card creation URL:', url)
+  console.log('[Fizzy] Card creation body:', body)
+  
+  const { data, location } = await swFetch(url, {
     method: 'POST',
     headers: createHeaders(apiKey),
-    body: JSON.stringify({ card }),
+    body,
   })
   
-  // Handle 201 Created - may not return body
-  if (response.status === 201) {
-    const location = response.headers.get('Location')
-    if (location) {
-      // Fetch the created card
-      const cardResponse = await fetch(`${FIZZY_API_BASE}${location}`, {
-        headers: createHeaders(apiKey),
-      })
-      return handleResponse<Card>(cardResponse)
-    }
+  console.log('[Fizzy] Card created, data:', data, 'location:', location)
+  
+  // If we got data back, return it
+  if (data) {
+    return data as Card
   }
   
-  return handleResponse<Card>(response)
+  // If we got a location header (201 Created), fetch the card
+  if (location) {
+    const { data: cardData } = await swFetch(`${FIZZY_API_BASE}${location}`, {
+      headers: createHeaders(apiKey),
+    })
+    return cardData as Card
+  }
+  
+  throw new FizzyApiError('No card data returned', 500, 'Error')
 }
 
 /**
@@ -275,36 +325,13 @@ export async function uploadImageAndCreateCard(
   apiKey: string,
   accountSlug: string,
   boardId: string,
-  imageDataUrl: string,
+  _imageDataUrl: string,
   title: string,
   metadata: string
 ): Promise<{ card: Card; cardUrl: string }> {
-  // Convert data URL to blob
-  const blob = dataUrlToBlob(imageDataUrl)
-  const arrayBuffer = await blob.arrayBuffer()
-  
-  // Calculate checksum (simplified - may need proper MD5 implementation)
-  const checksum = await calculateChecksum(arrayBuffer)
-  
-  const filename = `screenshot-${Date.now()}.png`
-  
-  // Create direct upload
-  const directUpload = await createDirectUpload(apiKey, accountSlug, {
-    filename,
-    byteSize: blob.size,
-    checksum,
-    contentType: blob.type,
-  })
-  
-  // Upload the file
-  await uploadFile(directUpload.direct_upload.url, directUpload.direct_upload.headers, blob)
-  
-  // Create the card with the image embedded
-  const description = `
-<p>${metadata}</p>
-<action-text-attachment sgid="${directUpload.signed_id}"></action-text-attachment>
-`.trim()
-  
+  // For now, just create a card without image to debug the 422
+  const description = metadata
+
   const card = await createCard(apiKey, accountSlug, boardId, {
     title,
     description,
