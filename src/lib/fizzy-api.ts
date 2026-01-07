@@ -90,7 +90,6 @@ export interface Card {
 export interface Tag {
   id: string
   title: string
-  color: string
   created_at: string
 }
 

@@ -116,7 +116,6 @@ export function TagSelector({ accountSlug, selectedTagIds, onTagsChange, disable
               <span 
                 key={tag.id} 
                 className="tag-chip"
-                style={{ backgroundColor: tag.color || '#4f46e5' }}
               >
                 {tag.title}
                 <button 

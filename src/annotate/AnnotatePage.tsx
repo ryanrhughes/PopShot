@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Canvas, FabricImage, Line, Rect, IText, Ellipse, PencilBrush, Group, Polygon, Pattern } from 'fabric'
-import type { TPointerEventInfo, TPointerEvent } from 'fabric'
+import { Canvas, FabricImage, Line, Rect, IText, Ellipse, PencilBrush, Group, Polygon, Pattern, util } from 'fabric'
+import type { TPointerEventInfo, TPointerEvent, FabricObject } from 'fabric'
 import { BoardSelector } from '../popup/components/BoardSelector'
 import { TagSelector } from './TagSelector'
 import { getApiKey } from '@/lib/storage'
 import { formatMetadataAsHtml, generateDefaultTitle, type PageMetadata } from '@/lib/metadata'
 import { uploadImageAndCreateCard } from '@/lib/fizzy-api'
 
-type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'freehand' | 'pixelate'
+type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'freehand' | 'pixelate' | 'crop'
 type AppState = 'loading' | 'annotating' | 'submitting' | 'error'
 
 interface SessionData {
@@ -46,14 +46,20 @@ export function AnnotatePage() {
   const [zoom, setZoom] = useState(100)
   const [baseScale, setBaseScale] = useState(1)
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
+  const [cropRegion, setCropRegion] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const [isCropping, setIsCropping] = useState(false)
+  const pendingObjectsRef = useRef<object[] | null>(null)
+  const pendingCropInfoRef = useRef<{ width: number; height: number } | null>(null)
+  const canvasInstanceIdRef = useRef(0) // Track canvas instance to detect recreation during async ops
   
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<Canvas | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const drawingStartRef = useRef<{ x: number; y: number } | null>(null)
   const currentShapeRef = useRef<Line | Rect | Ellipse | Group | null>(null)
-  const historyRef = useRef<string[]>([])
+  const historyRef = useRef<{ canvasJson: string; imageDataUrl: string }[]>([])
   const historyIndexRef = useRef(-1)
+  const isRestoringFromHistoryRef = useRef(false)
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
   const bgScaleRef = useRef<number>(1)
   const bgOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -190,6 +196,16 @@ export function AnnotatePage() {
   useEffect(() => {
     if (!canvasRef.current || !imageDataUrl || state !== 'annotating') return
 
+    // Increment canvas instance ID to track this specific canvas
+    canvasInstanceIdRef.current++
+    const thisCanvasId = canvasInstanceIdRef.current
+    
+    // Capture pending objects before canvas recreation (they'll be restored after bg loads)
+    const objectsToRestore = pendingObjectsRef.current
+    const cropInfo = pendingCropInfoRef.current
+    
+    console.log('[Crop] Canvas init #' + thisCanvasId + ' - pending objects:', objectsToRestore?.length ?? 0)
+
     const canvas = new Canvas(canvasRef.current, {
       width: canvasSize.width,
       height: canvasSize.height,
@@ -225,6 +241,8 @@ export function AnnotatePage() {
       bgScaleRef.current = scale
       bgOffsetRef.current = { x: offsetX, y: offsetY }
       
+      console.log('[Crop] Background loaded - scale:', scale, 'offset:', offsetX, offsetY)
+      
       // Store the actual HTML image element
       const htmlImg = new Image()
       htmlImg.onload = () => {
@@ -234,7 +252,76 @@ export function AnnotatePage() {
 
       fabricRef.current.backgroundImage = img
       fabricRef.current.renderAll()
-      saveHistory()
+      
+      // Always try to restore if we have pending objects
+      // Every canvas recreation needs to restore because the previous canvas was disposed
+      if (objectsToRestore && objectsToRestore.length > 0) {
+        console.log('[Crop] Canvas #' + thisCanvasId + ' - restoring objects:', objectsToRestore.length)
+        
+        util.enlivenObjects(objectsToRestore).then((objects) => {
+          // Check if canvas was recreated while we were enlivening objects
+          if (canvasInstanceIdRef.current !== thisCanvasId) {
+            console.log('[Crop] Canvas #' + thisCanvasId + ' was replaced by #' + canvasInstanceIdRef.current + ', skipping restore')
+            return
+          }
+          
+          if (!fabricRef.current) return
+          
+          console.log('[Crop] Canvas #' + thisCanvasId + ' - enlivened objects:', objects.length)
+          
+          const newBgOffset = bgOffsetRef.current
+          
+          objects.forEach((obj, idx) => {
+            if (!fabricRef.current || !obj || typeof obj !== 'object' || !('set' in obj)) return
+            
+            const fabObj = obj as FabricObject
+            const originalData = objectsToRestore[idx] as { _relativeLeft?: number; _relativeTop?: number; _oldBgScale?: number }
+            
+            if (cropInfo && originalData._relativeLeft !== undefined && originalData._relativeTop !== undefined && originalData._oldBgScale) {
+              const newBgWidth = (fabricRef.current.width || 0) - newBgOffset.x * 2
+              const newBgHeight = (fabricRef.current.height || 0) - newBgOffset.y * 2
+              const scaleRatio = bgScaleRef.current / originalData._oldBgScale
+              
+              const newLeft = originalData._relativeLeft * newBgWidth + newBgOffset.x
+              const newTop = originalData._relativeTop * newBgHeight + newBgOffset.y
+              
+              console.log('[Crop] Repositioning:', fabObj.type, 'to', newLeft, newTop, 'scale ratio:', scaleRatio)
+              
+              fabObj.set({ 
+                left: newLeft, 
+                top: newTop,
+                scaleX: (fabObj.scaleX || 1) * scaleRatio,
+                scaleY: (fabObj.scaleY || 1) * scaleRatio,
+              })
+              fabObj.setCoords()
+            }
+            
+            fabricRef.current!.add(fabObj)
+          })
+          
+          console.log('[Crop] Canvas #' + thisCanvasId + ' - objects on canvas after restore:', fabricRef.current.getObjects().length)
+          fabricRef.current.renderAll()
+          
+          // Only save history once per crop (when we successfully restore to the final canvas)
+          // We know we're on the final canvas if it's still the current one after a brief moment
+          setTimeout(() => {
+            if (canvasInstanceIdRef.current === thisCanvasId && pendingObjectsRef.current) {
+              console.log('[Crop] Canvas #' + thisCanvasId + ' is final, saving history and clearing pending')
+              pendingObjectsRef.current = null
+              pendingCropInfoRef.current = null
+              saveHistory()
+            }
+          }, 200)
+        }).catch(err => {
+          console.error('[Crop] Failed to enliven objects:', err)
+        })
+      } else {
+        // No objects to restore, just save history
+        if (!isRestoringFromHistoryRef.current) {
+          saveHistory()
+        }
+        isRestoringFromHistoryRef.current = false
+      }
     })
 
     return () => {
@@ -266,30 +353,56 @@ export function AnnotatePage() {
 
   // Save history
   const saveHistory = useCallback(() => {
-    if (!fabricRef.current) return
+    if (!fabricRef.current || !imageDataUrl || isRestoringFromHistoryRef.current) return
     const json = JSON.stringify(fabricRef.current.toJSON())
     historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1)
-    historyRef.current.push(json)
+    historyRef.current.push({ canvasJson: json, imageDataUrl })
     historyIndexRef.current = historyRef.current.length - 1
-  }, [])
+  }, [imageDataUrl])
+
+
 
   // Undo
   const handleUndo = useCallback(() => {
-    if (historyIndexRef.current <= 0 || !fabricRef.current) return
-    historyIndexRef.current--
-    fabricRef.current.loadFromJSON(JSON.parse(historyRef.current[historyIndexRef.current])).then(() => {
-      fabricRef.current?.renderAll()
-    })
-  }, [])
+    if (historyIndexRef.current > 0) {
+      historyIndexRef.current--
+      const historyEntry = historyRef.current[historyIndexRef.current]
+      
+      // Check if we need to restore a different image (undo crop)
+      if (historyEntry.imageDataUrl !== imageDataUrl) {
+        isRestoringFromHistoryRef.current = true
+        // Store the canvas state to restore after image changes
+        pendingObjectsRef.current = JSON.parse(historyEntry.canvasJson).objects || []
+        setImageDataUrl(historyEntry.imageDataUrl)
+        setZoom(100)
+      } else if (fabricRef.current) {
+        // Same image, just restore canvas state
+        fabricRef.current.loadFromJSON(JSON.parse(historyEntry.canvasJson)).then(() => {
+          fabricRef.current?.renderAll()
+        })
+      }
+    }
+  }, [imageDataUrl])
 
   // Redo
   const handleRedo = useCallback(() => {
-    if (historyIndexRef.current >= historyRef.current.length - 1 || !fabricRef.current) return
-    historyIndexRef.current++
-    fabricRef.current.loadFromJSON(JSON.parse(historyRef.current[historyIndexRef.current])).then(() => {
-      fabricRef.current?.renderAll()
-    })
-  }, [])
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      historyIndexRef.current++
+      const historyEntry = historyRef.current[historyIndexRef.current]
+      
+      // Check if we need to restore a different image (redo crop)
+      if (historyEntry.imageDataUrl !== imageDataUrl) {
+        isRestoringFromHistoryRef.current = true
+        pendingObjectsRef.current = JSON.parse(historyEntry.canvasJson).objects || []
+        setImageDataUrl(historyEntry.imageDataUrl)
+        setZoom(100)
+      } else if (fabricRef.current) {
+        fabricRef.current.loadFromJSON(JSON.parse(historyEntry.canvasJson)).then(() => {
+          fabricRef.current?.renderAll()
+        })
+      }
+    }
+  }, [imageDataUrl])
 
   // Clear
   const handleClear = useCallback(() => {
@@ -322,6 +435,99 @@ export function AnnotatePage() {
 
   const handleZoomReset = useCallback(() => {
     setZoom(100)
+  }, [])
+
+  // Apply crop - non-destructive, keeps annotations as objects
+  const handleApplyCrop = useCallback(() => {
+    if (!cropRegion || !fabricRef.current || !backgroundImageRef.current) return
+    if (cropRegion.width < 10 || cropRegion.height < 10) {
+      setCropRegion(null)
+      setIsCropping(false)
+      return
+    }
+
+    const canvas = fabricRef.current
+    const bgImg = backgroundImageRef.current
+    const scale = bgScaleRef.current
+    const offset = bgOffsetRef.current
+
+    // Convert crop region from canvas coords to original image coords
+    const srcX = (cropRegion.x - offset.x) / scale
+    const srcY = (cropRegion.y - offset.y) / scale
+    const srcW = cropRegion.width / scale
+    const srcH = cropRegion.height / scale
+
+    // Crop the background image
+    const cropCanvas = document.createElement('canvas')
+    cropCanvas.width = srcW
+    cropCanvas.height = srcH
+    const ctx = cropCanvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.drawImage(bgImg, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH)
+    const croppedDataUrl = cropCanvas.toDataURL('image/png')
+
+    // Save to history before making changes (with current image)
+    saveHistory()
+
+    // Calculate the scale ratio between old and new canvas
+    // Old canvas had the background at bgScaleRef.current scale
+    // New canvas will scale the cropped image to fit, which will be a different scale
+    // We need to store the crop info so we can adjust positions when restoring
+    
+    const objects = canvas.getObjects()
+    const shiftX = cropRegion.x
+    const shiftY = cropRegion.y
+    
+    console.log('[Crop] Crop region:', cropRegion)
+    console.log('[Crop] Current bg scale:', scale, 'offset:', offset)
+    
+    // Store the original positions relative to the crop region origin
+    // These are in the current canvas coordinate system
+    const objectsRelativeToCrop = objects.map(obj => {
+      const relLeft = (obj.left || 0) - shiftX
+      const relTop = (obj.top || 0) - shiftY
+      console.log('[Crop] Object:', obj.type, 'original:', obj.left, obj.top, 'relative to crop:', relLeft, relTop)
+      return { obj, relLeft, relTop }
+    })
+    
+    // Serialize objects with adjusted positions and store scale info
+    const adjustedObjects = objectsRelativeToCrop.map(({ obj, relLeft, relTop }) => {
+      const objData = obj.toObject()
+      // Store position as fraction of crop region (0-1 range plus overflow)
+      objData._relativeLeft = relLeft / cropRegion.width
+      objData._relativeTop = relTop / cropRegion.height
+      // Store the old scale so we can calculate the scale ratio
+      objData._oldBgScale = scale
+      // Also store the original scale-adjusted position
+      objData.left = relLeft
+      objData.top = relTop
+      return objData
+    })
+    
+    console.log('[Crop] Objects to transfer:', objects.length, adjustedObjects)
+
+    // Store adjusted objects and crop dimensions for position calculation when restoring
+    pendingObjectsRef.current = adjustedObjects
+    pendingCropInfoRef.current = { width: cropRegion.width, height: cropRegion.height }
+    
+    console.log('[Crop] Stored pending objects:', pendingObjectsRef.current.length)
+    console.log('[Crop] Pending objects data:', JSON.stringify(pendingObjectsRef.current, null, 2))
+    
+    // Update state - this will reinitialize the canvas with the cropped background
+    setImageDataUrl(croppedDataUrl)
+
+    // Reset crop state
+    setCropRegion(null)
+    setIsCropping(false)
+    setCurrentTool('select')
+    setZoom(100)
+  }, [cropRegion, saveHistory])
+
+  const handleCancelCrop = useCallback(() => {
+    setCropRegion(null)
+    setIsCropping(false)
+    setCurrentTool('select')
   }, [])
 
   // Apply zoom to canvas
@@ -375,6 +581,12 @@ export function AnnotatePage() {
     const pointer = fabricRef.current.getScenePoint(opt.e)
     drawingStartRef.current = { x: pointer.x, y: pointer.y }
     setIsDrawing(true)
+
+    if (currentTool === 'crop') {
+      setIsCropping(true)
+      setCropRegion({ x: pointer.x, y: pointer.y, width: 0, height: 0 })
+      return
+    }
 
     if (currentTool === 'arrow') {
       // Create initial arrow group
@@ -443,11 +655,23 @@ export function AnnotatePage() {
   }, [currentTool, currentColor, strokeWidth, saveHistory, createArrow])
 
   const handleMouseMove = useCallback((opt: TPointerEventInfo<TPointerEvent>) => {
-    if (!isDrawing || !drawingStartRef.current || !fabricRef.current || !currentShapeRef.current) return
+    if (!isDrawing || !drawingStartRef.current || !fabricRef.current) return
 
     const pointer = fabricRef.current.getScenePoint(opt.e)
     const startX = drawingStartRef.current.x
     const startY = drawingStartRef.current.y
+
+    if (currentTool === 'crop') {
+      setCropRegion({
+        x: Math.min(startX, pointer.x),
+        y: Math.min(startY, pointer.y),
+        width: Math.abs(pointer.x - startX),
+        height: Math.abs(pointer.y - startY),
+      })
+      return
+    }
+
+    if (!currentShapeRef.current) return
 
     if (currentTool === 'arrow' && currentShapeRef.current instanceof Group) {
       // Remove old arrow and create new one
@@ -497,6 +721,13 @@ export function AnnotatePage() {
   const handleMouseUp = useCallback(() => {
     if (!isDrawing || !fabricRef.current) return
 
+    // For crop, don't reset - keep the selection visible for apply/cancel
+    if (currentTool === 'crop') {
+      setIsDrawing(false)
+      drawingStartRef.current = null
+      return
+    }
+
     // Make shapes selectable after drawing
     if (currentShapeRef.current) {
       currentShapeRef.current.selectable = true
@@ -506,7 +737,7 @@ export function AnnotatePage() {
     drawingStartRef.current = null
     currentShapeRef.current = null
     saveHistory()
-  }, [isDrawing, saveHistory])
+  }, [isDrawing, saveHistory, currentTool])
 
   // Set up canvas events
   useEffect(() => {
@@ -561,10 +792,15 @@ export function AnnotatePage() {
       if (e.key === 't') setCurrentTool('text')
       if (e.key === 'p') setCurrentTool('freehand')
       if (e.key === 'x') setCurrentTool('pixelate')
+      if (e.key === 'c' && !e.ctrlKey && !e.metaKey) setCurrentTool('crop')
+      if (e.key === 'Escape' && isCropping) {
+        setCropRegion(null)
+        setIsCropping(false)
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleUndo, handleRedo, handleDelete])
+  }, [handleUndo, handleRedo, handleDelete, isCropping])
 
   // Submit - capture image data first, then submit
   const handleSubmit = async () => {
@@ -701,6 +937,9 @@ export function AnnotatePage() {
               <button className={`tool-btn ${currentTool === 'pixelate' ? 'active' : ''}`} onClick={() => setCurrentTool('pixelate')} title="Pixelate (X)">
                 <BlurIcon />
               </button>
+              <button className={`tool-btn ${currentTool === 'crop' ? 'active' : ''}`} onClick={() => setCurrentTool('crop')} title="Crop (C)">
+                <CropIcon />
+              </button>
             </div>
           </div>
 
@@ -746,7 +985,45 @@ export function AnnotatePage() {
 
         {/* Canvas */}
         <div className={`canvas-container ${zoom > 100 ? 'zoomed' : ''}`} ref={canvasContainerRef}>
-          <canvas ref={canvasRef} />
+          <div className="canvas-wrapper">
+            <canvas ref={canvasRef} />
+            {/* Crop overlay */}
+            {isCropping && cropRegion && cropRegion.width > 0 && cropRegion.height > 0 && (
+              <>
+                {/* Dark overlay outside crop region */}
+                <div className="crop-overlay">
+                  <div className="crop-mask-top" style={{ height: cropRegion.y }} />
+                  <div className="crop-mask-middle" style={{ height: cropRegion.height }}>
+                    <div className="crop-mask-left" style={{ width: cropRegion.x }} />
+                    <div 
+                      className="crop-selection" 
+                      style={{ 
+                        width: cropRegion.width, 
+                        height: cropRegion.height,
+                      }}
+                    />
+                    <div className="crop-mask-right" />
+                  </div>
+                  <div className="crop-mask-bottom" />
+                </div>
+                {/* Crop action buttons */}
+                <div 
+                  className="crop-actions"
+                  style={{ 
+                    left: cropRegion.x + cropRegion.width / 2,
+                    top: cropRegion.y + cropRegion.height + 10,
+                  }}
+                >
+                  <button className="crop-btn crop-cancel" onClick={handleCancelCrop} title="Cancel (Esc)">
+                    <CancelCropIcon />
+                  </button>
+                  <button className="crop-btn crop-apply" onClick={handleApplyCrop} title="Apply Crop">
+                    <ApplyCropIcon />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <div className="zoom-controls">
             <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out">−</button>
             <button className="zoom-level" onClick={handleZoomReset} title="Reset Zoom">{zoom}%</button>
@@ -886,6 +1163,15 @@ function BlurIcon() {
     <rect x="10" y="18" width="6" height="4" opacity="0.6" />
     <rect x="18" y="18" width="4" height="4" />
   </svg>
+}
+function CropIcon() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6.13 1L6 16a2 2 0 002 2h15" /><path d="M1 6.13L16 6a2 2 0 012 2v15" /></svg>
+}
+function ApplyCropIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+}
+function CancelCropIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
 }
 function TextIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
