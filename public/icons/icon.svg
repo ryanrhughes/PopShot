@@ -1,6 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#4f46e5"/>
-  <circle cx="64" cy="52" r="24" fill="white"/>
-  <path d="M32 80 L64 52 L96 80 L96 96 L32 96 Z" fill="white"/>
-  <rect x="44" y="88" width="40" height="8" rx="4" fill="#4f46e5"/>
+  <!-- Bars across full width (behind camera) - all same height -->
+  <rect x="2" y="0" width="14" height="128" rx="7" fill="#00b4ff"/>
+  <rect x="18" y="0" width="14" height="128" rx="7" fill="#e535ab"/>
+  <rect x="34" y="0" width="14" height="128" rx="7" fill="#a5d601"/>
+  <rect x="50" y="0" width="14" height="128" rx="7" fill="#c8d601"/>
+  <rect x="66" y="0" width="14" height="128" rx="7" fill="#ff9500"/>
+  <rect x="82" y="0" width="14" height="128" rx="7" fill="#00d4ff"/>
+  <rect x="98" y="0" width="14" height="128" rx="7" fill="#e535ab"/>
+  <rect x="114" y="0" width="12" height="128" rx="6" fill="#00b4ff"/>
+  
+  <!-- Camera top bump (viewfinder) with white outline -->
+  <rect x="40" y="16" width="48" height="20" rx="5" fill="#404040" stroke="white" stroke-width="3"/>
+  
+  <!-- Camera body with white outline -->
+  <rect x="12" y="32" width="104" height="84" rx="12" fill="#404040" stroke="white" stroke-width="3"/>
+  
+  <!-- Camera lens outer -->
+  <circle cx="64" cy="74" r="32" fill="#505050" stroke="white" stroke-width="3"/>
+  
+  <!-- Camera lens inner -->
+  <circle cx="64" cy="74" r="20" fill="#303030"/>
+  
+  <!-- Camera lens highlight -->
+  <circle cx="64" cy="74" r="10" fill="#454545"/>
 </svg>

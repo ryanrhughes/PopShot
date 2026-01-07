@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Canvas, FabricImage, Line, Rect, IText, Circle, PencilBrush } from 'fabric'
+import { Canvas, FabricImage, Line, Rect, IText, Ellipse, PencilBrush, Group, Polygon, Pattern } from 'fabric'
 import type { TPointerEventInfo, TPointerEvent } from 'fabric'
 import { BoardSelector } from '../popup/components/BoardSelector'
+import { TagSelector } from './TagSelector'
 import { getApiKey } from '@/lib/storage'
 import { formatMetadataAsHtml, generateDefaultTitle, type PageMetadata } from '@/lib/metadata'
 import { uploadImageAndCreateCard } from '@/lib/fizzy-api'
 
-type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'circle' | 'text' | 'freehand'
-type AppState = 'loading' | 'annotating' | 'submitting' | 'success' | 'error'
+type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'freehand' | 'pixelate'
+type AppState = 'loading' | 'annotating' | 'submitting' | 'error'
 
 interface SessionData {
   imageDataUrl: string
@@ -31,25 +32,101 @@ export function AnnotatePage() {
   const [state, setState] = useState<AppState>('loading')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<PageMetadata | null>(null)
-  const [currentTool, setCurrentTool] = useState<AnnotationTool>('arrow')
+  const [currentTool, setCurrentTool] = useState<AnnotationTool>('select')
   const [currentColor, setCurrentColor] = useState('#ef4444')
   const [strokeWidth, setStrokeWidth] = useState(4)
   const [isDrawing, setIsDrawing] = useState(false)
   const [selectedBoard, setSelectedBoard] = useState<{ slug: string; id: string; name: string } | null>(null)
   const [cardTitle, setCardTitle] = useState('')
   const [cardDescription, setCardDescription] = useState('')
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [cardUrl, setCardUrl] = useState<string | null>(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
   const [annotatedImageData, setAnnotatedImageData] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(100)
+  const [baseScale, setBaseScale] = useState(1)
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
   
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<Canvas | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const drawingStartRef = useRef<{ x: number; y: number } | null>(null)
-  const currentShapeRef = useRef<Line | Rect | Circle | null>(null)
+  const currentShapeRef = useRef<Line | Rect | Ellipse | Group | null>(null)
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef(-1)
+  const backgroundImageRef = useRef<HTMLImageElement | null>(null)
+  const bgScaleRef = useRef<number>(1)
+  const bgOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+
+  // Pixelate a region from the background image and return as data URL
+  const pixelateFromBackground = useCallback((left: number, top: number, width: number, height: number): string | null => {
+    const bgImg = backgroundImageRef.current
+    if (!bgImg || width < 1 || height < 1) return null
+
+    const scale = bgScaleRef.current
+    const offset = bgOffsetRef.current
+
+    // Convert canvas coords to background image coords
+    const srcX = (left - offset.x) / scale
+    const srcY = (top - offset.y) / scale
+    const srcW = width / scale
+    const srcH = height / scale
+
+    // Create canvas for the region
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = width
+    tempCanvas.height = height
+    const ctx = tempCanvas.getContext('2d')
+    if (!ctx) return null
+
+    // Draw the region from background
+    ctx.drawImage(bgImg, srcX, srcY, srcW, srcH, 0, 0, width, height)
+
+    // Pixelate by scaling down then up
+    const pixelSize = 10
+    const smallW = Math.max(1, Math.ceil(width / pixelSize))
+    const smallH = Math.max(1, Math.ceil(height / pixelSize))
+
+    const smallCanvas = document.createElement('canvas')
+    smallCanvas.width = smallW
+    smallCanvas.height = smallH
+    const smallCtx = smallCanvas.getContext('2d')
+    if (!smallCtx) return null
+
+    // Draw small (this averages the pixels)
+    smallCtx.drawImage(tempCanvas, 0, 0, smallW, smallH)
+
+    // Draw back large without smoothing (pixelated)
+    ctx.imageSmoothingEnabled = false
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(smallCanvas, 0, 0, width, height)
+
+    return tempCanvas.toDataURL('image/png')
+  }, [])
+
+  // Update pixelate zone's fill with pixelated image
+  const updatePixelateZone = useCallback((rect: Rect) => {
+    const left = rect.left || 0
+    const top = rect.top || 0
+    const width = (rect.width || 0) * (rect.scaleX || 1)
+    const height = (rect.height || 0) * (rect.scaleY || 1)
+
+    const pixelatedDataUrl = pixelateFromBackground(left, top, width, height)
+    if (!pixelatedDataUrl) return
+
+    // Create an image and set it as pattern fill
+    const img = new Image()
+    img.onload = () => {
+      rect.set({
+        fill: new Pattern({
+          source: img,
+          repeat: 'no-repeat',
+        }),
+      })
+      fabricRef.current?.renderAll()
+    }
+    img.src = pixelatedDataUrl
+  }, [pixelateFromBackground])
 
   // Load session data on mount
   useEffect(() => {
@@ -88,11 +165,18 @@ export function AnnotatePage() {
       const containerWidth = container.clientWidth - 32
       const containerHeight = container.clientHeight - 32
 
+      // Store original image size
+      setImageSize({ width: img.width, height: img.height })
+
+      // Calculate scale to fit in container
       const scale = Math.min(
         containerWidth / img.width,
         containerHeight / img.height,
         1
       )
+      
+      setBaseScale(scale)
+      setZoom(100)
 
       setCanvasSize({
         width: Math.floor(img.width * scale),
@@ -111,6 +195,8 @@ export function AnnotatePage() {
       height: canvasSize.height,
       backgroundColor: '#1a1a2e',
       selection: currentTool === 'select',
+      perPixelTargetFind: true,  // Allow clicking inside shapes to select them
+      targetFindTolerance: 5,    // Add some tolerance for easier selection
     })
 
     fabricRef.current = canvas
@@ -124,13 +210,27 @@ export function AnnotatePage() {
         canvasSize.height / (img.height || 1)
       )
 
+      const offsetX = (canvasSize.width - (img.width || 0) * scale) / 2
+      const offsetY = (canvasSize.height - (img.height || 0) * scale) / 2
+
       img.scale(scale)
       img.set({
-        left: (canvasSize.width - (img.width || 0) * scale) / 2,
-        top: (canvasSize.height - (img.height || 0) * scale) / 2,
+        left: offsetX,
+        top: offsetY,
         selectable: false,
         evented: false,
       })
+
+      // Store background info for pixelation
+      bgScaleRef.current = scale
+      bgOffsetRef.current = { x: offsetX, y: offsetY }
+      
+      // Store the actual HTML image element
+      const htmlImg = new Image()
+      htmlImg.onload = () => {
+        backgroundImageRef.current = htmlImg
+      }
+      htmlImg.src = imageDataUrl
 
       fabricRef.current.backgroundImage = img
       fabricRef.current.renderAll()
@@ -211,6 +311,63 @@ export function AnnotatePage() {
     saveHistory()
   }, [saveHistory])
 
+  // Zoom handlers
+  const handleZoomIn = useCallback(() => {
+    setZoom(z => Math.min(z + 25, 200))
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    setZoom(z => Math.max(z - 25, 50))
+  }, [])
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(100)
+  }, [])
+
+  // Apply zoom to canvas
+  useEffect(() => {
+    if (!imageSize.width || !baseScale) return
+    
+    const effectiveScale = baseScale * (zoom / 100)
+    setCanvasSize({
+      width: Math.floor(imageSize.width * effectiveScale),
+      height: Math.floor(imageSize.height * effectiveScale),
+    })
+  }, [zoom, baseScale, imageSize])
+
+  // Create arrow with line and head as a group
+  const createArrow = useCallback((x1: number, y1: number, x2: number, y2: number) => {
+    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const headLength = 12 + strokeWidth * 2
+
+    const line = new Line([x1, y1, x2, y2], {
+      stroke: currentColor,
+      strokeWidth: strokeWidth,
+      originX: 'center',
+      originY: 'center',
+    })
+
+    const headPoints = [
+      { x: x2, y: y2 },
+      { x: x2 - headLength * Math.cos(angle - Math.PI / 6), y: y2 - headLength * Math.sin(angle - Math.PI / 6) },
+      { x: x2 - headLength * Math.cos(angle + Math.PI / 6), y: y2 - headLength * Math.sin(angle + Math.PI / 6) },
+    ]
+
+    const arrowHead = new Polygon(headPoints, {
+      fill: currentColor,
+      stroke: currentColor,
+      strokeWidth: 1,
+      originX: 'center',
+      originY: 'center',
+    })
+
+    const group = new Group([line, arrowHead], {
+      selectable: true,
+    })
+
+    return group
+  }, [currentColor, strokeWidth])
+
   // Mouse handlers
   const handleMouseDown = useCallback((opt: TPointerEventInfo<TPointerEvent>) => {
     if (currentTool === 'select' || currentTool === 'freehand' || !fabricRef.current) return
@@ -220,38 +377,54 @@ export function AnnotatePage() {
     setIsDrawing(true)
 
     if (currentTool === 'arrow') {
-      const line = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-        stroke: currentColor,
-        strokeWidth: strokeWidth,
-        selectable: false,
-      })
-      fabricRef.current.add(line)
-      currentShapeRef.current = line
+      // Create initial arrow group
+      const arrow = createArrow(pointer.x, pointer.y, pointer.x + 1, pointer.y + 1)
+      arrow.selectable = false
+      fabricRef.current.add(arrow)
+      currentShapeRef.current = arrow
     } else if (currentTool === 'rectangle') {
       const rect = new Rect({
         left: pointer.x,
         top: pointer.y,
         width: 0,
         height: 0,
-        fill: 'transparent',
+        fill: 'rgba(0,0,0,0.01)', // Nearly invisible but clickable
         stroke: currentColor,
         strokeWidth: strokeWidth,
         selectable: false,
       })
       fabricRef.current.add(rect)
       currentShapeRef.current = rect
-    } else if (currentTool === 'circle') {
-      const circle = new Circle({
+    } else if (currentTool === 'ellipse') {
+      const ellipse = new Ellipse({
         left: pointer.x,
         top: pointer.y,
-        radius: 0,
-        fill: 'transparent',
+        rx: 0,
+        ry: 0,
+        fill: 'rgba(0,0,0,0.01)', // Nearly invisible but clickable
         stroke: currentColor,
         strokeWidth: strokeWidth,
         selectable: false,
       })
-      fabricRef.current.add(circle)
-      currentShapeRef.current = circle
+      fabricRef.current.add(ellipse)
+      currentShapeRef.current = ellipse
+    } else if (currentTool === 'pixelate') {
+      // Pixelation zone - will show pixelated content
+      const rect = new Rect({
+        left: pointer.x,
+        top: pointer.y,
+        width: 0,
+        height: 0,
+        fill: 'transparent',
+        stroke: 'transparent',
+        selectable: false,
+        objectCaching: false, // Disable caching so it updates on move
+        perPixelTargetFind: false, // Use bounding box for selection (filled with pattern)
+      })
+      // @ts-expect-error custom property for pixelate zones
+      rect.isPixelateZone = true
+      fabricRef.current.add(rect)
+      currentShapeRef.current = rect
     } else if (currentTool === 'text') {
       const text = new IText('Type here', {
         left: pointer.x,
@@ -267,7 +440,7 @@ export function AnnotatePage() {
       setCurrentTool('select')
       saveHistory()
     }
-  }, [currentTool, currentColor, strokeWidth, saveHistory])
+  }, [currentTool, currentColor, strokeWidth, saveHistory, createArrow])
 
   const handleMouseMove = useCallback((opt: TPointerEventInfo<TPointerEvent>) => {
     if (!isDrawing || !drawingStartRef.current || !fabricRef.current || !currentShapeRef.current) return
@@ -276,8 +449,13 @@ export function AnnotatePage() {
     const startX = drawingStartRef.current.x
     const startY = drawingStartRef.current.y
 
-    if (currentTool === 'arrow' && currentShapeRef.current instanceof Line) {
-      currentShapeRef.current.set({ x2: pointer.x, y2: pointer.y })
+    if (currentTool === 'arrow' && currentShapeRef.current instanceof Group) {
+      // Remove old arrow and create new one
+      fabricRef.current.remove(currentShapeRef.current)
+      const newArrow = createArrow(startX, startY, pointer.x, pointer.y)
+      newArrow.selectable = false
+      fabricRef.current.add(newArrow)
+      currentShapeRef.current = newArrow
     } else if (currentTool === 'rectangle' && currentShapeRef.current instanceof Rect) {
       currentShapeRef.current.set({
         left: Math.min(startX, pointer.x),
@@ -285,46 +463,50 @@ export function AnnotatePage() {
         width: Math.abs(pointer.x - startX),
         height: Math.abs(pointer.y - startY),
       })
-    } else if (currentTool === 'circle' && currentShapeRef.current instanceof Circle) {
-      const radius = Math.sqrt(Math.pow(pointer.x - startX, 2) + Math.pow(pointer.y - startY, 2)) / 2
+    } else if (currentTool === 'ellipse' && currentShapeRef.current instanceof Ellipse) {
+      const rx = Math.abs(pointer.x - startX) / 2
+      const ry = Math.abs(pointer.y - startY) / 2
       currentShapeRef.current.set({
-        left: (startX + pointer.x) / 2 - radius,
-        top: (startY + pointer.y) / 2 - radius,
-        radius,
+        left: Math.min(startX, pointer.x),
+        top: Math.min(startY, pointer.y),
+        rx,
+        ry,
       })
+    } else if (currentTool === 'pixelate' && currentShapeRef.current instanceof Rect) {
+      const newLeft = Math.min(startX, pointer.x)
+      const newTop = Math.min(startY, pointer.y)
+      const newWidth = Math.abs(pointer.x - startX)
+      const newHeight = Math.abs(pointer.y - startY)
+      
+      currentShapeRef.current.set({
+        left: newLeft,
+        top: newTop,
+        width: newWidth,
+        height: newHeight,
+      })
+      
+      // Update pixelation in real-time
+      if (newWidth > 5 && newHeight > 5) {
+        updatePixelateZone(currentShapeRef.current)
+      }
     }
 
     fabricRef.current.renderAll()
-  }, [isDrawing, currentTool])
+  }, [isDrawing, currentTool, createArrow, updatePixelateZone])
 
   const handleMouseUp = useCallback(() => {
-    if (!isDrawing) return
+    if (!isDrawing || !fabricRef.current) return
 
-    // Add arrowhead
-    if (currentTool === 'arrow' && currentShapeRef.current instanceof Line && fabricRef.current) {
-      const line = currentShapeRef.current
-      const x1 = line.x1 || 0, y1 = line.y1 || 0, x2 = line.x2 || 0, y2 = line.y2 || 0
-      const angle = Math.atan2(y2 - y1, x2 - x1)
-      const headLength = 12 + strokeWidth * 2
-
-      fabricRef.current.add(new Line([
-        x2, y2,
-        x2 - headLength * Math.cos(angle - Math.PI / 6),
-        y2 - headLength * Math.sin(angle - Math.PI / 6),
-      ], { stroke: currentColor, strokeWidth: strokeWidth, selectable: false }))
-
-      fabricRef.current.add(new Line([
-        x2, y2,
-        x2 - headLength * Math.cos(angle + Math.PI / 6),
-        y2 - headLength * Math.sin(angle + Math.PI / 6),
-      ], { stroke: currentColor, strokeWidth: strokeWidth, selectable: false }))
+    // Make shapes selectable after drawing
+    if (currentShapeRef.current) {
+      currentShapeRef.current.selectable = true
     }
 
     setIsDrawing(false)
     drawingStartRef.current = null
     currentShapeRef.current = null
     saveHistory()
-  }, [isDrawing, currentTool, currentColor, strokeWidth, saveHistory])
+  }, [isDrawing, saveHistory])
 
   // Set up canvas events
   useEffect(() => {
@@ -334,13 +516,30 @@ export function AnnotatePage() {
     canvas.on('mouse:move', handleMouseMove)
     canvas.on('mouse:up', handleMouseUp)
     canvas.on('path:created', saveHistory)
+    
+    // Update pixelate zones when objects are modified (moved, scaled, etc)
+    const handleObjectModified = (e: { target?: unknown }) => {
+      const obj = e.target as Rect | undefined
+      // @ts-expect-error custom property
+      if (obj && obj.isPixelateZone && obj instanceof Rect) {
+        updatePixelateZone(obj)
+      }
+    }
+    
+    canvas.on('object:modified', handleObjectModified)
+    canvas.on('object:moving', handleObjectModified)
+    canvas.on('object:scaling', handleObjectModified)
+    
     return () => {
       canvas.off('mouse:down', handleMouseDown)
       canvas.off('mouse:move', handleMouseMove)
       canvas.off('mouse:up', handleMouseUp)
       canvas.off('path:created', saveHistory)
+      canvas.off('object:modified', handleObjectModified)
+      canvas.off('object:moving', handleObjectModified)
+      canvas.off('object:scaling', handleObjectModified)
     }
-  }, [handleMouseDown, handleMouseMove, handleMouseUp, saveHistory])
+  }, [handleMouseDown, handleMouseMove, handleMouseUp, saveHistory, updatePixelateZone])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -358,9 +557,10 @@ export function AnnotatePage() {
       if (e.key === 'v') setCurrentTool('select')
       if (e.key === 'a') setCurrentTool('arrow')
       if (e.key === 'r') setCurrentTool('rectangle')
-      if (e.key === 'c') setCurrentTool('circle')
+      if (e.key === 'e') setCurrentTool('ellipse')
       if (e.key === 't') setCurrentTool('text')
       if (e.key === 'p') setCurrentTool('freehand')
+      if (e.key === 'x') setCurrentTool('pixelate')
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -373,7 +573,9 @@ export function AnnotatePage() {
       return
     }
 
-    // Capture the annotated image BEFORE changing state
+    setState('submitting')
+
+    // Capture the annotated image (pixelation already rendered)
     let imageData = annotatedImageData
     if (!imageData && fabricRef.current) {
       imageData = fabricRef.current.toDataURL({ format: 'png', quality: 1, multiplier: 2 })
@@ -382,10 +584,9 @@ export function AnnotatePage() {
 
     if (!imageData) {
       setError('Failed to capture annotated image')
+      setState('annotating')
       return
     }
-
-    setState('submitting')
     setError(null)
 
     try {
@@ -407,20 +608,30 @@ export function AnnotatePage() {
         fullDescription = metadataHtml
       }
 
+      console.log('[Fizzy] Submitting with tag IDs:', selectedTagIds)
+
       const result = await uploadImageAndCreateCard(
         apiKey,
         selectedBoard.slug,
         selectedBoard.id,
         imageData,
         cardTitle || generateDefaultTitle(metadata),
-        fullDescription
+        fullDescription,
+        selectedTagIds.length > 0 ? selectedTagIds : undefined
       )
 
       // Clear session data
       await chrome.storage.session.remove(['annotationSession'])
       
-      setCardUrl(result.cardUrl)
-      setState('success')
+      // Show notification and save to history
+      await chrome.runtime.sendMessage({ 
+        action: 'showSuccessNotification', 
+        cardUrl: result.cardUrl,
+        title: cardTitle,
+      })
+      
+      // Close this tab
+      window.close()
     } catch (err) {
       console.error('Submit error:', err)
       setError(err instanceof Error ? err.message : 'Failed to create card')
@@ -439,27 +650,6 @@ export function AnnotatePage() {
       <div className="page loading-page">
         <div className="spinner" />
         <p>Loading screenshot...</p>
-      </div>
-    )
-  }
-
-  // Render success state
-  if (state === 'success') {
-    return (
-      <div className="page success-page">
-        <div className="success-content">
-          <div className="success-icon"><CheckIcon /></div>
-          <h1>Feedback Submitted!</h1>
-          <p>Your card has been created in Fizzy.</p>
-          {cardUrl && (
-            <a href={cardUrl} target="_blank" rel="noopener noreferrer" className="view-link">
-              View Card in Fizzy
-            </a>
-          )}
-          <button className="primary-btn" onClick={() => window.close()}>
-            Close
-          </button>
-        </div>
       </div>
     )
   }
@@ -499,14 +689,17 @@ export function AnnotatePage() {
               <button className={`tool-btn ${currentTool === 'rectangle' ? 'active' : ''}`} onClick={() => setCurrentTool('rectangle')} title="Rectangle (R)">
                 <RectIcon />
               </button>
-              <button className={`tool-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => setCurrentTool('circle')} title="Circle (C)">
-                <CircleIcon />
+              <button className={`tool-btn ${currentTool === 'ellipse' ? 'active' : ''}`} onClick={() => setCurrentTool('ellipse')} title="Ellipse (E)">
+                <EllipseIcon />
               </button>
               <button className={`tool-btn ${currentTool === 'text' ? 'active' : ''}`} onClick={() => setCurrentTool('text')} title="Text (T)">
                 <TextIcon />
               </button>
               <button className={`tool-btn ${currentTool === 'freehand' ? 'active' : ''}`} onClick={() => setCurrentTool('freehand')} title="Freehand (P)">
                 <PenIcon />
+              </button>
+              <button className={`tool-btn ${currentTool === 'pixelate' ? 'active' : ''}`} onClick={() => setCurrentTool('pixelate')} title="Pixelate (X)">
+                <BlurIcon />
               </button>
             </div>
           </div>
@@ -552,8 +745,13 @@ export function AnnotatePage() {
         </div>
 
         {/* Canvas */}
-        <div className="canvas-container" ref={canvasContainerRef}>
+        <div className={`canvas-container ${zoom > 100 ? 'zoomed' : ''}`} ref={canvasContainerRef}>
           <canvas ref={canvasRef} />
+          <div className="zoom-controls">
+            <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out">−</button>
+            <button className="zoom-level" onClick={handleZoomReset} title="Reset Zoom">{zoom}%</button>
+            <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In">+</button>
+          </div>
         </div>
       </div>
 
@@ -593,9 +791,25 @@ export function AnnotatePage() {
           </div>
 
           <div className="form-group">
+            <label>Tags</label>
+            <TagSelector
+              accountSlug={selectedBoard?.slug ?? null}
+              selectedTagIds={selectedTagIds}
+              onTagsChange={setSelectedTagIds}
+              disabled={state === 'submitting'}
+            />
+          </div>
+
+          <div className="form-group">
             <BoardSelector
               currentUrl={metadata?.url}
-              onSelect={(slug, id, name) => setSelectedBoard({ slug, id, name })}
+              onSelect={(slug, id, name) => {
+                // Clear selected tags when board changes (tags are account-specific)
+                if (selectedBoard?.slug !== slug) {
+                  setSelectedTagIds([])
+                }
+                setSelectedBoard({ slug, id, name })
+              }}
               disabled={state === 'submitting'}
             />
           </div>
@@ -656,8 +870,22 @@ function ArrowIcon() {
 function RectIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
 }
-function CircleIcon() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /></svg>
+function EllipseIcon() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="12" rx="10" ry="6" /></svg>
+}
+function BlurIcon() {
+  // Pixelate icon - grid of squares
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <rect x="2" y="2" width="6" height="6" />
+    <rect x="10" y="2" width="6" height="6" opacity="0.6" />
+    <rect x="18" y="2" width="4" height="6" opacity="0.3" />
+    <rect x="2" y="10" width="6" height="6" opacity="0.6" />
+    <rect x="10" y="10" width="6" height="6" />
+    <rect x="18" y="10" width="4" height="6" opacity="0.6" />
+    <rect x="2" y="18" width="6" height="4" opacity="0.3" />
+    <rect x="10" y="18" width="6" height="4" opacity="0.6" />
+    <rect x="18" y="18" width="4" height="4" />
+  </svg>
 }
 function TextIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
@@ -679,9 +907,6 @@ function ClearIcon() {
 }
 function SendIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
-}
-function CheckIcon() {
-  return <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
 }
 function ErrorIcon() {
   return <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>

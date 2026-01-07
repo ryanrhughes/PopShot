@@ -136,7 +136,7 @@ export function BoardSelector({ currentUrl, onSelect, disabled }: BoardSelectorP
 
   return (
     <div className="board-selector">
-      <label htmlFor="board-select">Send to Board:</label>
+      <label htmlFor="board-select">Board:</label>
       <select
         id="board-select"
         value={selectedValue}

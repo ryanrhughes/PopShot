@@ -224,12 +224,62 @@ body {
   align-items: center;
   padding: 16px;
   background: #0a0a12;
+  overflow: hidden;
+  position: relative;
+}
+
+.canvas-container.zoomed {
   overflow: auto;
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 .canvas-container canvas {
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* Zoom controls */
+.zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 4px;
+  border: 1px solid #2d2d44;
+}
+
+.zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.zoom-btn:hover {
+  background: #3d3d5c;
+  color: #ffffff;
+}
+
+.zoom-level {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  font-size: 12px;
+  color: #9ca3af;
 }
 
 /* Sidebar (Right) */
@@ -317,6 +367,7 @@ body {
 
 /* Board selector overrides for dark theme */
 .board-selector {
+  display: flex;
   flex-direction: column;
   gap: 6px;
 }
@@ -361,6 +412,161 @@ body {
   background: #3d3d5c;
   border-color: #4f46e5;
   color: #818cf8;
+}
+
+/* Tag selector */
+.tag-selector {
+  position: relative;
+}
+
+.tag-selector.loading,
+.tag-selector.error,
+.tag-selector.empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #252538;
+  color: #9ca3af;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.tag-selector .error-text {
+  color: #fca5a5;
+}
+
+.tag-selector-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 6px 14px;
+  background: #252538;
+  border: 1px solid #3d3d5c;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tag-selector-input:hover:not(.disabled) {
+  border-color: #4f46e5;
+}
+
+.tag-selector-input.open {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.tag-selector-input.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tag-selector-input .placeholder {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.tag-selector-input .dropdown-arrow {
+  color: #6b7280;
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+.selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.tag-chip .tag-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin-left: 2px;
+  background: rgba(0, 0, 0, 0.2);
+  border: none;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.tag-chip .tag-remove:hover {
+  background: rgba(0, 0, 0, 0.4);
+  color: #ffffff;
+}
+
+.tag-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #252538;
+  border: 1px solid #4f46e5;
+  border-top: none;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.tag-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.tag-option:hover {
+  background: #3d3d5c;
+}
+
+.tag-option.selected {
+  background: rgba(79, 70, 229, 0.2);
+}
+
+.tag-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #4f46e5;
+  cursor: pointer;
+}
+
+.tag-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tag-name {
+  color: #e5e5e5;
+  font-size: 14px;
 }
 
 /* Metadata preview */

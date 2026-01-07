@@ -87,6 +87,13 @@ export interface Card {
   creator: User
 }
 
+export interface Tag {
+  id: string
+  title: string
+  color: string
+  created_at: string
+}
+
 export interface DirectUploadResponse {
   id: string
   key: string
@@ -163,6 +170,34 @@ export async function getBoards(apiKey: string, accountSlug: string): Promise<Bo
   })
   
   return data as Board[]
+}
+
+/**
+ * Get tags for an account
+ */
+export async function getTags(apiKey: string, accountSlug: string): Promise<Tag[]> {
+  const slug = normalizeSlug(accountSlug)
+  const { data } = await swFetch(`${FIZZY_API_BASE}/${slug}/tags`, {
+    headers: createHeaders(apiKey),
+  })
+  
+  return data as Tag[]
+}
+
+/**
+ * Get all tags across all accounts
+ */
+export async function getAllTags(apiKey: string): Promise<{ account: Account; tags: Tag[] }[]> {
+  const identity = await getIdentity(apiKey)
+  
+  const results = await Promise.all(
+    identity.accounts.map(async (account) => {
+      const tags = await getTags(apiKey, account.slug)
+      return { account, tags }
+    })
+  )
+  
+  return results
 }
 
 /**
@@ -254,6 +289,7 @@ export async function createCard(
   card: {
     title: string
     description?: string
+    tag_ids?: string[]
   }
 ): Promise<Card> {
   const slug = normalizeSlug(accountSlug)
@@ -325,17 +361,51 @@ export async function uploadImageAndCreateCard(
   apiKey: string,
   accountSlug: string,
   boardId: string,
-  _imageDataUrl: string,
+  imageDataUrl: string,
   title: string,
-  metadata: string
+  metadata: string,
+  tags?: string[]
 ): Promise<{ card: Card; cardUrl: string }> {
-  // For now, just create a card without image to debug the 422
-  const description = metadata
+  // Convert data URL to blob
+  const blob = dataUrlToBlob(imageDataUrl)
+  const arrayBuffer = await blob.arrayBuffer()
+  
+  // Calculate checksum
+  const checksum = await calculateChecksum(arrayBuffer)
+  
+  const filename = `screenshot-${Date.now()}.png`
+  
+  console.log('[Fizzy] Creating direct upload for:', filename, 'size:', blob.size, 'checksum:', checksum)
+  
+  // Create direct upload
+  const directUpload = await createDirectUpload(apiKey, accountSlug, {
+    filename,
+    byteSize: blob.size,
+    checksum,
+    contentType: blob.type,
+  })
+  
+  console.log('[Fizzy] Direct upload response:', directUpload)
+  
+  // Upload the file to S3
+  await uploadFile(directUpload.direct_upload.url, directUpload.direct_upload.headers, blob)
+  
+  // Create the card with the image embedded using attachable_sgid
+  const description = `
+${metadata}
+<action-text-attachment sgid="${directUpload.attachable_sgid}" content-type="${blob.type}" filename="${filename}"></action-text-attachment>
+`.trim()
+
+  console.log('[Fizzy] Creating card with description:', description)
+  console.log('[Fizzy] Tag IDs:', tags)
 
   const card = await createCard(apiKey, accountSlug, boardId, {
     title,
     description,
+    tag_ids: tags && tags.length > 0 ? tags : undefined,
   })
+  
+  console.log('[Fizzy] Card payload included tag_ids:', tags && tags.length > 0 ? tags : 'none')
   
   return { card, cardUrl: card.url }
 }

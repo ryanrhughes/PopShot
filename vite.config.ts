@@ -20,6 +20,7 @@ export default defineConfig({
         popup: resolve(__dirname, 'src/popup/index.html'),
         options: resolve(__dirname, 'src/options/index.html'),
         annotate: resolve(__dirname, 'src/annotate/index.html'),
+        history: resolve(__dirname, 'src/history/index.html'),
       },
     },
   },

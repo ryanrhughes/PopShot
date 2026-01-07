@@ -14,16 +14,15 @@ export default defineManifest({
     128: 'public/icons/icon-128.png',
   },
 
-  // Popup when clicking extension icon
+  // Extension icon - no popup, triggers screenshot capture directly
   action: {
-    default_popup: 'src/popup/index.html',
     default_icon: {
       16: 'public/icons/icon-16.png',
       32: 'public/icons/icon-32.png',
       48: 'public/icons/icon-48.png',
       128: 'public/icons/icon-128.png',
     },
-    default_title: 'Fizzy Feedback',
+    default_title: 'Capture Screenshot',
   },
 
   // Options page for settings
@@ -43,6 +42,9 @@ export default defineManifest({
     'activeTab',      // Capture screenshot of current tab
     'storage',        // Store API key and preferences
     'declarativeNetRequest',  // Modify request headers
+    'scripting',      // Inject scripts to get viewport dimensions
+    'notifications',  // Show success notifications
+    'contextMenus',   // Right-click menu for History/Settings
   ],
 
   // Host permissions for Fizzy API
