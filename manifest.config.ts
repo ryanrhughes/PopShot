@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 export default defineManifest({
   manifest_version: 3,
   name: 'PopShot',
-  description: 'Capture, annotate, and submit screenshots as feedback',
+  description: 'Capture, annotate, and send screenshot feedback directly to Fizzy',
   version: '0.1.0',
   
   // Extension icon

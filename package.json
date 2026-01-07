@@ -1,7 +1,7 @@
 {
   "name": "popshot",
   "version": "0.1.0",
-  "description": "Capture, annotate, and submit screenshots as feedback",
+  "description": "Capture, annotate, and send screenshot feedback directly to Fizzy",
   "type": "module",
   "scripts": {
     "dev": "vite",
