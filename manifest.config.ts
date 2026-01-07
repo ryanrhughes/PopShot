@@ -41,7 +41,6 @@ export default defineManifest({
   permissions: [
     'activeTab',      // Capture screenshot of current tab
     'storage',        // Store API key and preferences
-    'declarativeNetRequest',  // Modify request headers
     'scripting',      // Inject scripts to get viewport dimensions
     'notifications',  // Show success notifications
     'contextMenus',   // Right-click menu for History/Settings
@@ -51,13 +50,4 @@ export default defineManifest({
   host_permissions: [
     'https://app.fizzy.do/*',
   ],
-
-  // Declarative net request rules to fix Origin header
-  declarative_net_request: {
-    rule_resources: [{
-      id: 'fizzy_rules',
-      enabled: true,
-      path: 'rules.json',
-    }],
-  },
 })
