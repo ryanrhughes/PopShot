@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: 'PopShot',
   description: 'Capture, annotate, and send screenshot feedback directly to Fizzy',
-  version: '0.1.0',
+  version: '0.1.1',
   
   // Extension icon
   icons: {
@@ -44,10 +44,22 @@ export default defineManifest({
     'scripting',      // Inject scripts to get viewport dimensions
     'notifications',  // Show success notifications
     'contextMenus',   // Right-click menu for History/Settings
+    'declarativeNetRequest',  // Modify headers for API requests
   ],
 
   // Host permissions for Fizzy API (required for service worker fetch requests)
   host_permissions: [
     'https://app.fizzy.do/*',
   ],
+
+  // Declarative net request rules to fix Origin header for Fizzy API
+  declarative_net_request: {
+    rule_resources: [
+      {
+        id: 'ruleset_1',
+        enabled: true,
+        path: 'public/rules.json',
+      },
+    ],
+  },
 })
