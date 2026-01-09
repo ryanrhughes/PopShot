@@ -22,6 +22,9 @@ A Chrome browser extension for capturing, annotating, and sending screenshot fee
 
 ## Installation
 
+### Install from the Chrome Web Store
+- [Chrome Web Store Listing](https://chromewebstore.google.com/detail/hkojmgeacmocafnaiallhmkfjcimafok?utm_source=item-share-cb)
+
 ### Development Setup
 
 1. Clone the repository:
