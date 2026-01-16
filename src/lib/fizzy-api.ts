@@ -185,34 +185,56 @@ export async function getTags(apiKey: string, accountSlug: string): Promise<Tag[
 
 /**
  * Get all tags across all accounts
+ * Gracefully handles errors from individual accounts (e.g., archived accounts return 403)
  */
 export async function getAllTags(apiKey: string): Promise<{ account: Account; tags: Tag[] }[]> {
   const identity = await getIdentity(apiKey)
   
-  const results = await Promise.all(
-    identity.accounts.map(async (account) => {
+  // Filter to only active accounts (user.active indicates if the user's membership is active)
+  const activeAccounts = identity.accounts.filter(account => account.user.active)
+  
+  // Use Promise.allSettled to handle individual account failures gracefully
+  // Some accounts may be archived/inaccessible (403) even though they appear in identity
+  const settledResults = await Promise.allSettled(
+    activeAccounts.map(async (account) => {
       const tags = await getTags(apiKey, account.slug)
       return { account, tags }
     })
   )
   
-  return results
+  // Return only successful results, silently skip inaccessible accounts
+  return settledResults
+    .filter((result): result is PromiseFulfilledResult<{ account: Account; tags: Tag[] }> => 
+      result.status === 'fulfilled'
+    )
+    .map(result => result.value)
 }
 
 /**
  * Get all boards across all accounts
+ * Gracefully handles errors from individual accounts (e.g., archived accounts return 403)
  */
 export async function getAllBoards(apiKey: string): Promise<{ account: Account; boards: Board[] }[]> {
   const identity = await getIdentity(apiKey)
   
-  const results = await Promise.all(
-    identity.accounts.map(async (account) => {
+  // Filter to only active accounts (user.active indicates if the user's membership is active)
+  const activeAccounts = identity.accounts.filter(account => account.user.active)
+  
+  // Use Promise.allSettled to handle individual account failures gracefully
+  // Some accounts may be archived/inaccessible (403) even though they appear in identity
+  const settledResults = await Promise.allSettled(
+    activeAccounts.map(async (account) => {
       const boards = await getBoards(apiKey, account.slug)
       return { account, boards }
     })
   )
   
-  return results
+  // Return only successful results, silently skip inaccessible accounts
+  return settledResults
+    .filter((result): result is PromiseFulfilledResult<{ account: Account; boards: Board[] }> => 
+      result.status === 'fulfilled'
+    )
+    .map(result => result.value)
 }
 
 /**

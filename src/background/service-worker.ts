@@ -58,7 +58,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, data: result.data, location: result.location })
       })
       .catch((error) => {
-        console.error('API request failed:', error)
+        // Don't log 403 errors - these are expected for archived/inaccessible accounts
+        if (error.status !== 403) {
+          console.error('API request failed:', error)
+        }
         sendResponse({ success: false, error: error.message, status: error.status })
       })
     
