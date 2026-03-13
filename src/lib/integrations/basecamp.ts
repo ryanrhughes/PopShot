@@ -24,11 +24,12 @@ import {
   createTodo,
   createCard,
   dataUrlToArrayBuffer,
+  refreshAccessToken,
   type BasecampProject,
   type BasecampTodoList,
   type BasecampCardColumn,
 } from '../basecamp-api'
-import { getIntegrationCredentials } from '../storage'
+import { getIntegrationCredentials, setBasecampCredentials } from '../storage'
 
 /**
  * Basecamp integration implementation
@@ -215,7 +216,8 @@ ${this.getImageEmbedHtml(upload)}
   // ============ Private helpers ============
 
   /**
-   * Get the stored credentials, throwing if not configured
+   * Get the stored credentials, refreshing the token if expired.
+   * Throws if not configured.
    */
   private async getCredentials(): Promise<{
     accessToken: string
@@ -230,8 +232,46 @@ ${this.getImageEmbedHtml(upload)}
       throw new IntegrationError('Basecamp is not configured', 'basecamp')
     }
 
+    // Check if token is expired or about to expire (within 5 minutes)
+    let accessToken = bc.accessToken
+    if (bc.expiresAt && bc.refreshToken && bc.clientId && bc.clientSecret) {
+      const expiresAt = new Date(bc.expiresAt)
+      const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000)
+      
+      if (expiresAt <= fiveMinutesFromNow) {
+        // Token expired or expiring soon - refresh it
+        try {
+          const tokenData = await refreshAccessToken(
+            bc.refreshToken,
+            bc.clientId,
+            bc.clientSecret
+          )
+          
+          // Calculate new expiration time
+          const newExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+          
+          // Update stored credentials
+          await setBasecampCredentials({
+            ...bc,
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token,
+            expiresAt: newExpiresAt,
+          })
+          
+          accessToken = tokenData.access_token
+        } catch (error) {
+          // If refresh fails, throw an error indicating re-auth is needed
+          throw new IntegrationError(
+            'Basecamp session expired. Please reconnect in Settings.',
+            'basecamp',
+            401
+          )
+        }
+      }
+    }
+
     return {
-      accessToken: bc.accessToken,
+      accessToken,
       accountId: parseInt(bc.accountId, 10),
       accountName: bc.accountName,
       apiBaseUrl: bc.apiBaseUrl,

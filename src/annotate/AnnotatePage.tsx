@@ -1103,7 +1103,7 @@ export function AnnotatePage() {
             <div className="form-group">
               <label>Tags</label>
               <TagSelector
-                accountSlug={selectedDestination.id}
+                accountSlug={selectedDestination.accountId}
                 selectedTagIds={selectedTagIds}
                 onTagsChange={setSelectedTagIds}
                 disabled={state === 'submitting'}

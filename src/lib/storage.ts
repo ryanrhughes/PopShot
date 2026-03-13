@@ -249,7 +249,7 @@ export async function getLastUsedDestination(
       if (integration === 'basecamp' && 'projectId' in urlDest) {
         return {
           destinationId: urlDest.projectId,
-          accountId: urlDest.projectId,
+          accountId: urlDest.accountId,
           subDestinationId: urlDest.todolistId || urlDest.columnId,
         }
       }
@@ -273,7 +273,7 @@ export async function getLastUsedDestination(
   if (integration === 'basecamp' && 'projectId' in lastUsed) {
     return {
       destinationId: lastUsed.projectId,
-      accountId: lastUsed.projectId,
+      accountId: lastUsed.accountId,
       subDestinationId: lastUsed.todolistId || lastUsed.columnId,
     }
   }
@@ -316,11 +316,13 @@ export async function setLastUsedDestination(
       
       if (destType === 'card') {
         prefs.urlDestinations[origin].basecamp = {
+          accountId,
           projectId: destinationId,
           columnId: subDestinationId,
         }
       } else {
         prefs.urlDestinations[origin].basecamp = {
+          accountId,
           projectId: destinationId,
           todolistId: subDestinationId,
         }
@@ -343,11 +345,13 @@ export async function setLastUsedDestination(
       
       if (destType === 'card') {
         prefs.lastUsedDestinations.basecamp = {
+          accountId,
           projectId: destinationId,
           columnId: subDestinationId,
         }
       } else {
         prefs.lastUsedDestinations.basecamp = {
+          accountId,
           projectId: destinationId,
           todolistId: subDestinationId,
         }

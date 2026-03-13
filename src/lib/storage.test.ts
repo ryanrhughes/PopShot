@@ -488,14 +488,14 @@ describe('storage', () => {
         setMockStorage({
           integrationPreferences: {
             lastUsedDestinations: {
-              basecamp: { projectId: 'project-456', todolistId: 'todolist-789' },
+              basecamp: { accountId: 'account-456', projectId: 'project-456', todolistId: 'todolist-789' },
             },
           },
         })
         const result = await getLastUsedDestination('basecamp')
         expect(result).toEqual({
           destinationId: 'project-456',
-          accountId: 'project-456',
+          accountId: 'account-456',
           subDestinationId: 'todolist-789',
         })
       })
@@ -504,14 +504,14 @@ describe('storage', () => {
         setMockStorage({
           integrationPreferences: {
             lastUsedDestinations: {
-              basecamp: { projectId: 'project-456', columnId: 'column-123' },
+              basecamp: { accountId: 'account-456', projectId: 'project-456', columnId: 'column-123' },
             },
           },
         })
         const result = await getLastUsedDestination('basecamp')
         expect(result).toEqual({
           destinationId: 'project-456',
-          accountId: 'project-456',
+          accountId: 'account-456',
           subDestinationId: 'column-123',
         })
       })
@@ -540,9 +540,10 @@ describe('storage', () => {
       })
 
       it('sets basecamp last used destination with todolist (default)', async () => {
-        await setLastUsedDestination('basecamp', 'project-123', 'project-123', 'todolist-456')
+        await setLastUsedDestination('basecamp', 'project-123', 'account-123', 'todolist-456')
         const prefs = await getIntegrationPreferences()
         expect(prefs.lastUsedDestinations?.basecamp).toEqual({
+          accountId: 'account-123',
           projectId: 'project-123',
           todolistId: 'todolist-456',
         })
@@ -555,9 +556,10 @@ describe('storage', () => {
             basecamp: { clientId: 'id', clientSecret: 'secret', destinationType: 'card' },
           },
         })
-        await setLastUsedDestination('basecamp', 'project-123', 'project-123', 'column-789')
+        await setLastUsedDestination('basecamp', 'project-123', 'account-123', 'column-789')
         const prefs = await getIntegrationPreferences()
         expect(prefs.lastUsedDestinations?.basecamp).toEqual({
+          accountId: 'account-123',
           projectId: 'project-123',
           columnId: 'column-789',
         })
@@ -665,7 +667,7 @@ describe('storage', () => {
           integrationPreferences: {
             urlDestinations: {
               'https://app.example.com': {
-                basecamp: { projectId: 'url-project', todolistId: 'url-todolist' },
+                basecamp: { accountId: 'url-account', projectId: 'url-project', todolistId: 'url-todolist' },
               },
             },
           },
@@ -673,7 +675,7 @@ describe('storage', () => {
         const result = await getLastUsedDestination('basecamp', 'https://app.example.com/dashboard')
         expect(result).toEqual({
           destinationId: 'url-project',
-          accountId: 'url-project',
+          accountId: 'url-account',
           subDestinationId: 'url-todolist',
         })
       })
@@ -683,7 +685,7 @@ describe('storage', () => {
           integrationPreferences: {
             urlDestinations: {
               'https://app.example.com': {
-                basecamp: { projectId: 'url-project', columnId: 'url-column' },
+                basecamp: { accountId: 'url-account', projectId: 'url-project', columnId: 'url-column' },
               },
             },
           },
@@ -691,7 +693,7 @@ describe('storage', () => {
         const result = await getLastUsedDestination('basecamp', 'https://app.example.com/kanban')
         expect(result).toEqual({
           destinationId: 'url-project',
-          accountId: 'url-project',
+          accountId: 'url-account',
           subDestinationId: 'url-column',
         })
       })
@@ -772,12 +774,13 @@ describe('storage', () => {
         await setLastUsedDestination(
           'basecamp',
           'url-project-123',
-          'url-project-123',
+          'url-account-123',
           'url-todolist-456',
           'https://client.example.com/dashboard'
         )
         const prefs = await getIntegrationPreferences()
         expect(prefs.urlDestinations?.['https://client.example.com']?.basecamp).toEqual({
+          accountId: 'url-account-123',
           projectId: 'url-project-123',
           todolistId: 'url-todolist-456',
         })
@@ -792,12 +795,13 @@ describe('storage', () => {
         await setLastUsedDestination(
           'basecamp',
           'url-project-789',
-          'url-project-789',
+          'url-account-789',
           'url-column-abc',
           'https://kanban.example.com/board'
         )
         const prefs = await getIntegrationPreferences()
         expect(prefs.urlDestinations?.['https://kanban.example.com']?.basecamp).toEqual({
+          accountId: 'url-account-789',
           projectId: 'url-project-789',
           columnId: 'url-column-abc',
         })

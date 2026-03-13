@@ -502,7 +502,8 @@ export async function createTodo(
 /**
  * Upload an attachment (image or file)
  * 
- * Basecamp requires sending the raw binary data with Content-Type and Content-Length headers.
+ * Basecamp requires sending the raw binary data with Content-Type header.
+ * Note: Content-Length is automatically set by the browser/fetch implementation.
  */
 export async function uploadAttachment(
   accessToken: string,
@@ -519,7 +520,7 @@ export async function uploadAttachment(
         'Authorization': `Bearer ${accessToken}`,
         'User-Agent': USER_AGENT,
         'Content-Type': contentType,
-        'Content-Length': data.byteLength.toString(),
+        // Content-Length is set automatically by fetch
       },
       body: data,
     }

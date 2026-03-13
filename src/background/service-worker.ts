@@ -475,14 +475,32 @@ interface BasecampAuthorizationResponse {
   }>
 }
 
+/**
+ * Generate a cryptographically secure random state parameter for CSRF protection
+ */
+function generateOAuthState(): string {
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+// Store OAuth state temporarily for validation
+let pendingOAuthState: string | null = null
+
 async function handleBasecampOAuthStart(clientId: string, redirectUri: string): Promise<{ accountName: string }> {
-  console.log('[Basecamp OAuth] Starting OAuth flow')
-  console.log('[Basecamp OAuth] Client ID:', clientId)
-  console.log('[Basecamp OAuth] Redirect URI:', redirectUri)
+  // Generate state parameter for CSRF protection
+  const state = generateOAuthState()
+  pendingOAuthState = state
   
-  // Build the authorization URL
-  const authUrl = `https://launchpad.37signals.com/authorization/new?type=web_server&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`
-  console.log('[Basecamp OAuth] Auth URL:', authUrl)
+  // Build the authorization URL with state parameter
+  // Using response_type=code for standard OAuth 2.0 Authorization Code flow
+  const params = new URLSearchParams({
+    type: 'web_server',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    state: state,
+  })
+  const authUrl = `https://launchpad.37signals.com/authorization/new?${params.toString()}`
 
   // Launch the OAuth flow
   let responseUrl: string | undefined
@@ -491,23 +509,28 @@ async function handleBasecampOAuthStart(clientId: string, redirectUri: string): 
       url: authUrl,
       interactive: true,
     })
-    console.log('[Basecamp OAuth] Response URL:', responseUrl)
   } catch (err) {
-    console.error('[Basecamp OAuth] launchWebAuthFlow error:', err)
+    pendingOAuthState = null
     throw err
   }
 
   if (!responseUrl) {
+    pendingOAuthState = null
     throw new Error('Authorization was cancelled')
   }
 
-  // Extract the authorization code from the response URL
+  // Extract the authorization code and state from the response URL
   const url = new URL(responseUrl)
   const code = url.searchParams.get('code')
+  const returnedState = url.searchParams.get('state')
   const error = url.searchParams.get('error')
 
-  console.log('[Basecamp OAuth] Code:', code ? 'received' : 'missing')
-  console.log('[Basecamp OAuth] Error:', error)
+  // Validate state parameter to prevent CSRF attacks
+  if (returnedState !== pendingOAuthState) {
+    pendingOAuthState = null
+    throw new Error('Invalid OAuth state - possible CSRF attack')
+  }
+  pendingOAuthState = null
 
   if (error) {
     throw new Error(`Authorization failed: ${error}`)
@@ -518,7 +541,6 @@ async function handleBasecampOAuthStart(clientId: string, redirectUri: string): 
   }
 
   // Exchange code for tokens
-  console.log('[Basecamp OAuth] Exchanging code for tokens...')
   return handleBasecampOAuthExchange(code, redirectUri)
 }
 
@@ -532,7 +554,8 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
     throw new Error('Basecamp app credentials not configured')
   }
 
-  // Exchange code for tokens
+  // Exchange code for tokens using standard OAuth 2.0 format
+  // Basecamp accepts both 'type: web_server' and 'grant_type: authorization_code'
   const tokenResponse = await fetch(`${BASECAMP_AUTH_BASE}/authorization/token`, {
     method: 'POST',
     headers: {
@@ -540,7 +563,7 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
       'User-Agent': 'PopShot (https://github.com/anomalyco/PopShot)',
     },
     body: JSON.stringify({
-      type: 'web_server',
+      grant_type: 'authorization_code',
       client_id: clientId,
       client_secret: clientSecret,
       redirect_uri: redirectUri,

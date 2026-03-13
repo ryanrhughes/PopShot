@@ -144,6 +144,8 @@ export interface FizzyDestinationInfo {
  * Stored destination info for Basecamp
  */
 export interface BasecampDestinationInfo {
+  /** The Basecamp account ID */
+  accountId: string
   projectId: string
   /** ID of the To-do List (when destinationType is 'todo') */
   todolistId?: string
