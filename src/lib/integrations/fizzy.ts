@@ -166,10 +166,10 @@ export class FizzyIntegration implements Integration {
     const filename = `screenshot-${Date.now()}.png`
     const upload = await this.uploadImageForAccount(report.imageDataUrl, filename, report.accountId)
 
-    // Build the description with metadata and embedded image
+    // Build the description with embedded image
+    // Note: report.description already contains the metadata HTML from AnnotatePage
     const description = `
-${report.metadataHtml}
-${report.description ? `<p>${report.description}</p>` : ''}
+${report.description || ''}
 ${this.getImageEmbedHtml(upload)}
 `.trim()
 
