@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 export default defineManifest({
   manifest_version: 3,
   name: 'PopShot',
-  description: 'Capture, annotate, and send screenshot feedback directly to Fizzy',
+  description: 'Capture, annotate, and send screenshot feedback to Fizzy or Basecamp',
   version: '0.1.1',
   
   // Extension icon
@@ -45,11 +45,14 @@ export default defineManifest({
     'notifications',  // Show success notifications
     'contextMenus',   // Right-click menu for History/Settings
     'declarativeNetRequest',  // Modify headers for API requests
+    'identity',       // OAuth flows with chrome.identity.launchWebAuthFlow
   ],
 
-  // Host permissions for Fizzy API (required for service worker fetch requests)
+  // Host permissions for API requests (required for service worker fetch requests)
   host_permissions: [
     'https://app.fizzy.do/*',
+    'https://3.basecampapi.com/*',
+    'https://launchpad.37signals.com/*',
   ],
 
   // Declarative net request rules to fix Origin header for Fizzy API

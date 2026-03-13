@@ -4,6 +4,7 @@ interface HistoryEntry {
   title: string
   cardUrl: string
   timestamp: number
+  integration?: string
 }
 
 export function HistoryPage() {
@@ -62,8 +63,17 @@ export function HistoryPage() {
             {history.map((entry, index) => (
               <li key={index} className="history-item">
                 <a href={entry.cardUrl} target="_blank" rel="noopener noreferrer" className="history-link">
-                  <span className="history-title">{entry.title}</span>
-                  <span className="history-date">{formatDate(entry.timestamp)}</span>
+                  <div className="history-info">
+                    <span className="history-title">{entry.title}</span>
+                    <span className="history-meta">
+                      {entry.integration && (
+                        <span className={`integration-badge ${entry.integration}`}>
+                          {entry.integration === 'basecamp' ? 'Basecamp' : 'Fizzy'}
+                        </span>
+                      )}
+                      <span className="history-date">{formatDate(entry.timestamp)}</span>
+                    </span>
+                  </div>
                 </a>
               </li>
             ))}

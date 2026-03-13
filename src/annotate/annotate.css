@@ -839,3 +839,225 @@ body {
     height: 40vh;
   }
 }
+
+/* Integration Selector */
+.integration-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.integration-selector.loading,
+.integration-selector.empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.integration-selector.empty a {
+  color: var(--fizzy-blue-light);
+  text-decoration: underline;
+}
+
+.integration-selector.single .integration-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-dark);
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.integration-selector.single .integration-badge svg {
+  color: var(--fizzy-blue-light);
+}
+
+.integration-selector > label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.integration-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.integration-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.integration-option:hover:not(:disabled) {
+  background: var(--bg-medium);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.integration-option.active {
+  background: var(--fizzy-blue);
+  border-color: var(--fizzy-blue);
+  color: #ffffff;
+}
+
+.integration-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.integration-option svg {
+  flex-shrink: 0;
+}
+
+/* Destination Selector */
+.destination-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.destination-selector.loading,
+.destination-selector.empty,
+.destination-selector.error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.destination-selector.error {
+  color: #fca5a5;
+  justify-content: space-between;
+}
+
+.destination-selector.error button {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: var(--bg-medium);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.destination-selector.error button:hover {
+  background: var(--bg-light);
+}
+
+.destination-selector .form-group {
+  margin-bottom: 0;
+}
+
+.destination-selector .loading-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-dark);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.destination-selector .help-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Destination type toggle */
+.destination-type-toggle {
+  margin-top: 12px;
+}
+
+.destination-type-toggle label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.toggle-buttons {
+  display: flex;
+  gap: 0;
+  background: var(--bg-dark);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.toggle-btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.toggle-btn:hover:not(:disabled):not(.active) {
+  color: var(--text-secondary);
+}
+
+.toggle-btn.active {
+  background: var(--fizzy-blue);
+  color: #ffffff;
+}
+
+.toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Warning message for no destinations */
+.destination-selector .warning-message {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.destination-selector .warning-message strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fcd34d;
+}
+
+.destination-selector .warning-message p {
+  margin: 0;
+  color: #d4a017;
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Canvas, FabricImage, Line, Rect, IText, Ellipse, PencilBrush, Group, Polygon, Pattern, util } from 'fabric'
 import type { TPointerEventInfo, TPointerEvent, FabricObject } from 'fabric'
-import { BoardSelector } from '../popup/components/BoardSelector'
+import { IntegrationSelector } from './IntegrationSelector'
+import { DestinationSelector } from './DestinationSelector'
 import { TagSelector } from './TagSelector'
-import { getApiKey } from '@/lib/storage'
 import { formatMetadataAsHtml, generateDefaultTitle, type PageMetadata } from '@/lib/metadata'
-import { uploadImageAndCreateCard } from '@/lib/fizzy-api'
+import { 
+  getIntegration,
+  type IntegrationType,
+  type Destination,
+  type SubDestination,
+} from '@/lib/integrations'
 
 type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'freehand' | 'pixelate' | 'crop'
 type AppState = 'loading' | 'annotating' | 'submitting' | 'error'
@@ -36,7 +41,9 @@ export function AnnotatePage() {
   const [currentColor, setCurrentColor] = useState('#ef4444')
   const [strokeWidth, setStrokeWidth] = useState(4)
   const [isDrawing, setIsDrawing] = useState(false)
-  const [selectedBoard, setSelectedBoard] = useState<{ slug: string; id: string; name: string } | null>(null)
+  const [selectedIntegration, setSelectedIntegration] = useState<IntegrationType | null>(null)
+  const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null)
+  const [selectedSubDestination, setSelectedSubDestination] = useState<SubDestination | null>(null)
   const [cardTitle, setCardTitle] = useState('')
   const [cardDescription, setCardDescription] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
@@ -782,8 +789,20 @@ export function AnnotatePage() {
 
   // Submit - capture image data first, then submit
   const handleSubmit = async () => {
-    if (!selectedBoard || !metadata) {
-      setError('Please select a board')
+    if (!selectedIntegration || !selectedDestination || !metadata) {
+      setError('Please select a destination')
+      return
+    }
+
+    const integration = getIntegration(selectedIntegration)
+    if (!integration) {
+      setError('Integration not found')
+      return
+    }
+
+    // Check if sub-destination is required but not selected
+    if (integration.requiresSubDestination() && !selectedSubDestination) {
+      setError('Please select a to-do list')
       return
     }
 
@@ -804,9 +823,6 @@ export function AnnotatePage() {
     setError(null)
 
     try {
-      const apiKey = await getApiKey()
-      if (!apiKey) throw new Error('No API key found')
-
       // Build description with user content and metadata
       const metadataHtml = formatMetadataAsHtml(metadata)
       let fullDescription = ''
@@ -822,15 +838,17 @@ export function AnnotatePage() {
         fullDescription = metadataHtml
       }
 
-      const result = await uploadImageAndCreateCard(
-        apiKey,
-        selectedBoard.slug,
-        selectedBoard.id,
-        imageData,
-        cardTitle || generateDefaultTitle(metadata),
-        fullDescription,
-        selectedTagIds.length > 0 ? selectedTagIds : undefined
-      )
+      // Submit using the integration
+      const result = await integration.submitReport({
+        title: cardTitle || generateDefaultTitle(metadata),
+        description: fullDescription,
+        imageDataUrl: imageData,
+        destinationId: selectedDestination.id,
+        accountId: selectedDestination.accountId,
+        subDestinationId: selectedSubDestination?.id,
+        tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
+        metadataHtml,
+      })
 
       // Clear session data
       await chrome.storage.session.remove(['annotationSession'])
@@ -838,15 +856,16 @@ export function AnnotatePage() {
       // Show notification and save to history
       await chrome.runtime.sendMessage({ 
         action: 'showSuccessNotification', 
-        cardUrl: result.cardUrl,
+        cardUrl: result.url,
         title: cardTitle,
+        integration: selectedIntegration,
       })
       
       // Close this tab
       window.close()
     } catch (err) {
       console.error('Submit error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to create card')
+      setError(err instanceof Error ? err.message : 'Failed to submit feedback')
       setState('annotating') // Go back to annotating state so user can retry
     }
   }
@@ -1044,28 +1063,53 @@ export function AnnotatePage() {
           </div>
 
           <div className="form-group">
-            <label>Tags</label>
-            <TagSelector
-              accountSlug={selectedBoard?.slug ?? null}
-              selectedTagIds={selectedTagIds}
-              onTagsChange={setSelectedTagIds}
-              disabled={state === 'submitting'}
-            />
-          </div>
-
-          <div className="form-group">
-            <BoardSelector
-              currentUrl={metadata?.url}
-              onSelect={(slug, id, name) => {
-                // Clear selected tags when board changes (tags are account-specific)
-                if (selectedBoard?.slug !== slug) {
+            <label>Integration</label>
+            <IntegrationSelector
+              value={selectedIntegration}
+              onChange={(type) => {
+                // Clear destination and tags when integration changes
+                if (selectedIntegration !== type) {
+                  setSelectedDestination(null)
+                  setSelectedSubDestination(null)
                   setSelectedTagIds([])
                 }
-                setSelectedBoard({ slug, id, name })
+                setSelectedIntegration(type)
               }}
               disabled={state === 'submitting'}
             />
           </div>
+
+          {selectedIntegration && (
+            <div className="form-group">
+              <label>Destination</label>
+              <DestinationSelector
+                integrationType={selectedIntegration}
+                currentUrl={metadata?.url}
+                onSelect={(dest, subDest) => {
+                  // Clear tags when destination changes
+                  if (selectedDestination?.id !== dest.id) {
+                    setSelectedTagIds([])
+                  }
+                  setSelectedDestination(dest)
+                  setSelectedSubDestination(subDest || null)
+                }}
+                disabled={state === 'submitting'}
+              />
+            </div>
+          )}
+
+          {/* Tags - only show for Fizzy integration */}
+          {selectedIntegration === 'fizzy' && selectedDestination && (
+            <div className="form-group">
+              <label>Tags</label>
+              <TagSelector
+                accountSlug={selectedDestination.id}
+                selectedTagIds={selectedTagIds}
+                onTagsChange={setSelectedTagIds}
+                disabled={state === 'submitting'}
+              />
+            </div>
+          )}
 
           {metadata && (
             <div className="metadata-preview">
@@ -1093,7 +1137,7 @@ export function AnnotatePage() {
           <button
             className="submit-btn"
             onClick={handleSubmit}
-            disabled={state === 'submitting' || !selectedBoard || !cardTitle.trim()}
+            disabled={state === 'submitting' || !selectedIntegration || !selectedDestination || !cardTitle.trim()}
           >
             {state === 'submitting' ? (
               <>
@@ -1103,7 +1147,7 @@ export function AnnotatePage() {
             ) : (
               <>
                 <SendIcon />
-                Submit to Fizzy
+                Submit to {selectedIntegration === 'basecamp' ? 'Basecamp' : 'Fizzy'}
               </>
             )}
           </button>

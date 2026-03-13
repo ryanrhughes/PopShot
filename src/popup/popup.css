@@ -225,3 +225,23 @@ body {
   font-size: 11px;
   color: #9ca3af;
 }
+
+/* Integration badges */
+.integrations-badge {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.integration-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: #eef2ff;
+  color: #4f46e5;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}

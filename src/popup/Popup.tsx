@@ -1,21 +1,23 @@
 import { useState, useEffect } from 'react'
-import { hasApiKey } from '@/lib/storage'
 import { captureMetadata, type PageMetadata } from '@/lib/metadata'
+import { getConfiguredIntegrations, type Integration } from '@/lib/integrations'
 
-type AppState = 'checking' | 'no-api-key' | 'idle' | 'capturing'
+type AppState = 'checking' | 'no-integrations' | 'idle' | 'capturing'
 
 export function Popup() {
   const [state, setState] = useState<AppState>('checking')
   const [error, setError] = useState<string | null>(null)
+  const [integrations, setIntegrations] = useState<Integration[]>([])
 
-  // Check for API key on mount
+  // Check for configured integrations on mount
   useEffect(() => {
-    checkApiKey()
+    checkIntegrations()
   }, [])
 
-  const checkApiKey = async () => {
-    const hasKey = await hasApiKey()
-    setState(hasKey ? 'idle' : 'no-api-key')
+  const checkIntegrations = async () => {
+    const configured = await getConfiguredIntegrations()
+    setIntegrations(configured)
+    setState(configured.length > 0 ? 'idle' : 'no-integrations')
   }
 
   const handleCapture = async () => {
@@ -74,12 +76,12 @@ export function Popup() {
           </div>
         )}
 
-        {state === 'no-api-key' && (
+        {state === 'no-integrations' && (
           <div className="setup-section">
             <p>Welcome to PopShot!</p>
-            <p className="hint">Please configure your API key to get started.</p>
+            <p className="hint">Please configure an integration to get started.</p>
             <button className="primary-btn" onClick={openOptions}>
-              Set Up API Key
+              Set Up Integration
             </button>
           </div>
         )}
@@ -87,8 +89,15 @@ export function Popup() {
         {state === 'idle' && (
           <div className="capture-section">
             <p className="description">
-              Capture a screenshot and send feedback directly to Fizzy.
+              Capture a screenshot and send feedback.
             </p>
+            {integrations.length > 0 && (
+              <div className="integrations-badge">
+                {integrations.map(i => (
+                  <span key={i.type} className="integration-chip">{i.name}</span>
+                ))}
+              </div>
+            )}
             {error && (
               <div className="error-banner">
                 {error}
