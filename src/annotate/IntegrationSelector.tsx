@@ -4,37 +4,45 @@ import {
   type Integration,
   type IntegrationType,
 } from '../lib/integrations'
-import { getDefaultIntegration } from '../lib/storage'
+import { getLastUsedIntegration, setLastUsedIntegration } from '../lib/storage'
 
 interface IntegrationSelectorProps {
   value: IntegrationType | null
   onChange: (integration: IntegrationType) => void
+  currentUrl?: string
   disabled?: boolean
 }
 
-export function IntegrationSelector({ value, onChange, disabled }: IntegrationSelectorProps) {
+export function IntegrationSelector({ value, onChange, currentUrl, disabled }: IntegrationSelectorProps) {
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     loadIntegrations()
-  }, [])
+  }, [currentUrl])
 
   const loadIntegrations = async () => {
     const configured = await getConfiguredIntegrations()
     setIntegrations(configured)
     
-    // If no value selected yet, select the default
+    // If no value selected yet, select the URL-specific or default
     if (!value && configured.length > 0) {
-      const defaultType = await getDefaultIntegration()
-      if (defaultType) {
-        onChange(defaultType)
+      const lastUsedType = await getLastUsedIntegration(currentUrl)
+      // Make sure the last used type is actually configured
+      if (lastUsedType && configured.some(c => c.type === lastUsedType)) {
+        onChange(lastUsedType)
       } else {
         onChange(configured[0].type)
       }
     }
     
     setLoading(false)
+  }
+
+  const handleChange = async (type: IntegrationType) => {
+    // Save the integration choice for this URL
+    await setLastUsedIntegration(type, currentUrl)
+    onChange(type)
   }
 
   if (loading) {
@@ -73,7 +81,7 @@ export function IntegrationSelector({ value, onChange, disabled }: IntegrationSe
           <button
             key={integration.type}
             className={`integration-option ${value === integration.type ? 'active' : ''}`}
-            onClick={() => onChange(integration.type)}
+            onClick={() => handleChange(integration.type)}
             disabled={disabled}
           >
             <IntegrationIcon type={integration.type} />

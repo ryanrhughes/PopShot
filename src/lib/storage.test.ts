@@ -33,6 +33,8 @@ import {
   getLastUsedDestination,
   setLastUsedDestination,
   getOriginFromUrl,
+  getLastUsedIntegration,
+  setLastUsedIntegration,
 } from './storage'
 
 describe('storage', () => {
@@ -627,14 +629,172 @@ describe('storage', () => {
       expect(result).toBe('https://app.example.com')
     })
 
-    it('returns original string for invalid URL', () => {
+    it('returns null for invalid URL', () => {
       const result = getOriginFromUrl('not-a-valid-url')
-      expect(result).toBe('not-a-valid-url')
+      expect(result).toBeNull()
     })
 
-    it('returns original string for empty string', () => {
+    it('returns null for empty string', () => {
       const result = getOriginFromUrl('')
-      expect(result).toBe('')
+      expect(result).toBeNull()
+    })
+
+    it('returns null for chrome:// URLs', () => {
+      const result = getOriginFromUrl('chrome://extensions/')
+      expect(result).toBeNull()
+    })
+
+    it('returns null for file:// URLs', () => {
+      const result = getOriginFromUrl('file:///path/to/file.html')
+      expect(result).toBeNull()
+    })
+  })
+
+  // ============ URL-based Integration Tests ============
+
+  describe('URL-based Last Used Integration', () => {
+    describe('getLastUsedIntegration', () => {
+      it('returns URL-specific integration when available', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            urlDestinations: {
+              'https://app.example.com': {
+                lastUsedIntegration: 'basecamp',
+              },
+            },
+            defaultIntegration: 'fizzy',
+          },
+        })
+        const result = await getLastUsedIntegration('https://app.example.com/page/123')
+        expect(result).toBe('basecamp')
+      })
+
+      it('falls back to global default when no URL-specific integration exists', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            defaultIntegration: 'fizzy',
+          },
+        })
+        const result = await getLastUsedIntegration('https://app.example.com/page')
+        expect(result).toBe('fizzy')
+      })
+
+      it('returns null when no URL-specific or global default exists', async () => {
+        setMockStorage({
+          integrationPreferences: {},
+        })
+        const result = await getLastUsedIntegration('https://app.example.com/page')
+        expect(result).toBeNull()
+      })
+
+      it('falls back to global default for invalid URLs', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            defaultIntegration: 'basecamp',
+          },
+        })
+        const result = await getLastUsedIntegration('not-a-valid-url')
+        expect(result).toBe('basecamp')
+      })
+
+      it('falls back to global default for chrome:// URLs', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            defaultIntegration: 'fizzy',
+          },
+        })
+        const result = await getLastUsedIntegration('chrome://extensions/')
+        expect(result).toBe('fizzy')
+      })
+
+      it('returns global default when no URL provided', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            defaultIntegration: 'basecamp',
+          },
+        })
+        const result = await getLastUsedIntegration()
+        expect(result).toBe('basecamp')
+      })
+
+      it('returns null when no URL provided and no global default', async () => {
+        setMockStorage({
+          integrationPreferences: {},
+        })
+        const result = await getLastUsedIntegration()
+        expect(result).toBeNull()
+      })
+    })
+
+    describe('setLastUsedIntegration', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      type StorageWithPrefs = { integrationPreferences: any }
+
+      it('stores integration for specific URL origin', async () => {
+        await setLastUsedIntegration('basecamp', 'https://app.example.com/page/123')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.urlDestinations['https://app.example.com'].lastUsedIntegration).toBe('basecamp')
+      })
+
+      it('preserves existing URL destination data when setting integration', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            urlDestinations: {
+              'https://app.example.com': {
+                fizzy: { boardId: 'existing-board', accountSlug: 'existing-account' },
+              },
+            },
+          },
+        })
+        await setLastUsedIntegration('basecamp', 'https://app.example.com/page')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.urlDestinations['https://app.example.com']).toEqual({
+          fizzy: { boardId: 'existing-board', accountSlug: 'existing-account' },
+          lastUsedIntegration: 'basecamp',
+        })
+      })
+
+      it('sets global default when no URL provided', async () => {
+        await setLastUsedIntegration('fizzy')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.defaultIntegration).toBe('fizzy')
+      })
+
+      it('sets global default for invalid URLs', async () => {
+        await setLastUsedIntegration('basecamp', 'not-a-valid-url')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.defaultIntegration).toBe('basecamp')
+      })
+
+      it('sets global default for chrome:// URLs', async () => {
+        await setLastUsedIntegration('fizzy', 'chrome://extensions/')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.defaultIntegration).toBe('fizzy')
+      })
+
+      it('overwrites previous URL-specific integration', async () => {
+        setMockStorage({
+          integrationPreferences: {
+            urlDestinations: {
+              'https://app.example.com': {
+                lastUsedIntegration: 'fizzy',
+              },
+            },
+          },
+        })
+        await setLastUsedIntegration('basecamp', 'https://app.example.com/page')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.urlDestinations['https://app.example.com'].lastUsedIntegration).toBe('basecamp')
+      })
+
+      it('creates urlDestinations object if not exists', async () => {
+        setMockStorage({
+          integrationPreferences: {},
+        })
+        await setLastUsedIntegration('basecamp', 'https://new-site.com/page')
+        const storage = getMockStorage() as StorageWithPrefs
+        expect(storage.integrationPreferences.urlDestinations['https://new-site.com'].lastUsedIntegration).toBe('basecamp')
+      })
     })
   })
 

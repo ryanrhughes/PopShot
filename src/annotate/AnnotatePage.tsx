@@ -1066,6 +1066,7 @@ export function AnnotatePage() {
             <label>Integration</label>
             <IntegrationSelector
               value={selectedIntegration}
+              currentUrl={metadata?.url}
               onChange={(type) => {
                 // Clear destination and tags when integration changes
                 if (selectedIntegration !== type) {

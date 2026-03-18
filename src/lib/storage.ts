@@ -212,15 +212,78 @@ export async function setDefaultIntegration(integration: IntegrationType): Promi
 /**
  * Extract origin from a URL (protocol + hostname + port)
  * e.g., "https://app.example.com:3000/path" -> "https://app.example.com:3000"
+ * Returns null for invalid URLs or non-web URLs (chrome://, file://, etc.)
  */
-export function getOriginFromUrl(url: string): string {
+export function getOriginFromUrl(url: string): string | null {
   try {
     const parsed = new URL(url)
+    // Some URLs (like file://, chrome://) return "null" as the origin string
+    if (parsed.origin === 'null' || !parsed.origin) {
+      return null
+    }
     return parsed.origin
   } catch {
-    // If URL parsing fails, return the original URL
-    return url
+    // If URL parsing fails, return null
+    return null
   }
+}
+
+/**
+ * Get last used integration for a URL
+ * Falls back to global default integration if no URL-specific one exists
+ */
+export async function getLastUsedIntegration(url?: string): Promise<IntegrationType | null> {
+  const prefs = await getIntegrationPreferences()
+  
+  // Try URL-specific integration first
+  if (url) {
+    const origin = getOriginFromUrl(url)
+    if (origin) {
+      const urlPref = prefs.urlDestinations?.[origin]?.lastUsedIntegration
+      if (urlPref) {
+        return urlPref
+      }
+    }
+  }
+  
+  // Fall back to global default
+  return prefs.defaultIntegration || null
+}
+
+/**
+ * Set last used integration for a URL
+ */
+export async function setLastUsedIntegration(
+  integration: IntegrationType,
+  url?: string
+): Promise<void> {
+  const prefs = await getIntegrationPreferences()
+  
+  if (url) {
+    const origin = getOriginFromUrl(url)
+    
+    // If we can't parse the URL, fall back to setting global default
+    if (!origin) {
+      prefs.defaultIntegration = integration
+      await setIntegrationPreferences(prefs)
+      return
+    }
+    
+    if (!prefs.urlDestinations) {
+      prefs.urlDestinations = {}
+    }
+    
+    if (!prefs.urlDestinations[origin]) {
+      prefs.urlDestinations[origin] = {}
+    }
+    
+    prefs.urlDestinations[origin].lastUsedIntegration = integration
+  } else {
+    // No URL provided, set as global default
+    prefs.defaultIntegration = integration
+  }
+  
+  await setIntegrationPreferences(prefs)
 }
 
 /**
@@ -236,21 +299,23 @@ export async function getLastUsedDestination(
   // Try URL-specific destination first
   if (url) {
     const origin = getOriginFromUrl(url)
-    const urlDest = prefs.urlDestinations?.[origin]?.[integration]
-    
-    if (urlDest) {
-      if (integration === 'fizzy' && 'boardId' in urlDest) {
-        return {
-          destinationId: urlDest.boardId,
-          accountId: urlDest.accountSlug,
-        }
-      }
+    if (origin) {
+      const urlDest = prefs.urlDestinations?.[origin]?.[integration]
       
-      if (integration === 'basecamp' && 'projectId' in urlDest) {
-        return {
-          destinationId: urlDest.projectId,
-          accountId: urlDest.accountId,
-          subDestinationId: urlDest.todolistId || urlDest.columnId,
+      if (urlDest) {
+        if (integration === 'fizzy' && 'boardId' in urlDest) {
+          return {
+            destinationId: urlDest.boardId,
+            accountId: urlDest.accountSlug,
+          }
+        }
+        
+        if (integration === 'basecamp' && 'projectId' in urlDest) {
+          return {
+            destinationId: urlDest.projectId,
+            accountId: urlDest.accountId,
+            subDestinationId: urlDest.todolistId || urlDest.columnId,
+          }
         }
       }
     }
@@ -297,39 +362,47 @@ export async function setLastUsedDestination(
   if (url) {
     const origin = getOriginFromUrl(url)
     
-    if (!prefs.urlDestinations) {
-      prefs.urlDestinations = {}
-    }
-    
-    if (!prefs.urlDestinations[origin]) {
-      prefs.urlDestinations[origin] = {}
-    }
-    
-    if (integration === 'fizzy') {
-      prefs.urlDestinations[origin].fizzy = {
-        boardId: destinationId,
-        accountSlug: accountId,
+    // If we can't parse the URL, fall back to legacy global storage
+    if (origin) {
+      if (!prefs.urlDestinations) {
+        prefs.urlDestinations = {}
       }
-    } else if (integration === 'basecamp') {
-      const creds = await getIntegrationCredentials()
-      const destType = creds.basecamp?.destinationType || 'todo'
       
-      if (destType === 'card') {
-        prefs.urlDestinations[origin].basecamp = {
-          accountId,
-          projectId: destinationId,
-          columnId: subDestinationId,
+      if (!prefs.urlDestinations[origin]) {
+        prefs.urlDestinations[origin] = {}
+      }
+      
+      if (integration === 'fizzy') {
+        prefs.urlDestinations[origin].fizzy = {
+          boardId: destinationId,
+          accountSlug: accountId,
         }
-      } else {
-        prefs.urlDestinations[origin].basecamp = {
-          accountId,
-          projectId: destinationId,
-          todolistId: subDestinationId,
+      } else if (integration === 'basecamp') {
+        const creds = await getIntegrationCredentials()
+        const destType = creds.basecamp?.destinationType || 'todo'
+        
+        if (destType === 'card') {
+          prefs.urlDestinations[origin].basecamp = {
+            accountId,
+            projectId: destinationId,
+            columnId: subDestinationId,
+          }
+        } else {
+          prefs.urlDestinations[origin].basecamp = {
+            accountId,
+            projectId: destinationId,
+            todolistId: subDestinationId,
+          }
         }
       }
+      
+      await setIntegrationPreferences(prefs)
+      return
     }
-  } else {
-    // Fallback to legacy global storage if no URL provided
+  }
+  
+  // Fallback to legacy global storage if no URL provided or URL is invalid
+  {
     if (!prefs.lastUsedDestinations) {
       prefs.lastUsedDestinations = {}
     }

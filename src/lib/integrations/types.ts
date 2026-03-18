@@ -155,10 +155,12 @@ export interface BasecampDestinationInfo {
 
 /**
  * Last used destinations keyed by origin URL
- * e.g., { "https://app.example.com": { fizzy: {...}, basecamp: {...} } }
+ * e.g., { "https://app.example.com": { lastUsedIntegration: 'basecamp', fizzy: {...}, basecamp: {...} } }
  */
 export interface UrlDestinationMap {
   [origin: string]: {
+    /** Which integration was last used for this URL */
+    lastUsedIntegration?: IntegrationType
     fizzy?: FizzyDestinationInfo
     basecamp?: BasecampDestinationInfo
   }
