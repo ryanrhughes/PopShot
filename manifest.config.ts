@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: 'PopShot',
   description: 'Capture, annotate, and send screenshot feedback to Fizzy or Basecamp',
-  version: '0.2.1',
+  version: '0.2.2',
   
   // Extension icon
   icons: {
@@ -22,7 +22,18 @@ export default defineManifest({
       48: 'public/icons/icon-48.png',
       128: 'public/icons/icon-128.png',
     },
-    default_title: 'Capture Screenshot',
+    default_title: 'Capture Screenshot (Alt+Shift+S)',
+  },
+
+  // Keyboard shortcut for screenshot capture
+  commands: {
+    _execute_action: {
+      suggested_key: {
+        default: 'Alt+Shift+S',
+        mac: 'Alt+Shift+S',
+      },
+      description: 'Capture screenshot',
+    },
   },
 
   // Options page for settings
