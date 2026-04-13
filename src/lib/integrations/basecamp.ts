@@ -78,12 +78,14 @@ export class BasecampIntegration implements Integration {
    * Get all projects as destinations
    */
   async getDestinations(): Promise<Destination[]> {
-    const { accessToken, accountId, accountName } = await this.getCredentials()
-    const projects = await getProjects(accessToken, accountId)
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId, accountName } = await this.getCredentials()
+      const projects = await getProjects(accessToken, accountId)
 
-    return projects
-      .filter(project => project.status === 'active')
-      .map(project => this.projectToDestination(project, accountId, accountName))
+      return projects
+        .filter(project => project.status === 'active')
+        .map(project => this.projectToDestination(project, accountId, accountName))
+    })
   }
 
   /**
@@ -91,18 +93,20 @@ export class BasecampIntegration implements Integration {
    * (depending on destinationType setting)
    */
   async getSubDestinations(projectId: string): Promise<SubDestination[]> {
-    const { accessToken, accountId, destinationType } = await this.getCredentials()
-    const projectIdNum = parseInt(projectId, 10)
-    
-    if (destinationType === 'card') {
-      // Get card table columns
-      const columns = await getProjectCardColumns(accessToken, accountId, projectIdNum)
-      return columns.map(col => this.cardColumnToSubDestination(col, projectId))
-    } else {
-      // Default to to-do lists
-      const todoLists = await getProjectTodoLists(accessToken, accountId, projectIdNum)
-      return todoLists.map(list => this.todoListToSubDestination(list, projectId))
-    }
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId, destinationType } = await this.getCredentials()
+      const projectIdNum = parseInt(projectId, 10)
+
+      if (destinationType === 'card') {
+        // Get card table columns
+        const columns = await getProjectCardColumns(accessToken, accountId, projectIdNum)
+        return columns.map(col => this.cardColumnToSubDestination(col, projectId))
+      } else {
+        // Default to to-do lists
+        const todoLists = await getProjectTodoLists(accessToken, accountId, projectIdNum)
+        return todoLists.map(list => this.todoListToSubDestination(list, projectId))
+      }
+    })
   }
 
   /**
@@ -130,79 +134,83 @@ export class BasecampIntegration implements Integration {
    * Upload an image to Basecamp
    */
   async uploadImage(imageDataUrl: string, filename: string): Promise<UploadResult> {
-    const { accessToken, accountId } = await this.getCredentials()
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId } = await this.getCredentials()
 
-    // Convert data URL to binary
-    const { buffer, mimeType } = dataUrlToArrayBuffer(imageDataUrl)
+      // Convert data URL to binary
+      const { buffer, mimeType } = dataUrlToArrayBuffer(imageDataUrl)
 
-    // Upload the attachment
-    const attachment = await uploadAttachment(
-      accessToken,
-      accountId,
-      filename,
-      mimeType,
-      buffer
-    )
+      // Upload the attachment
+      const attachment = await uploadAttachment(
+        accessToken,
+        accountId,
+        filename,
+        mimeType,
+        buffer
+      )
 
-    return {
-      sgid: attachment.attachable_sgid,
-      filename: attachment.filename,
-      contentType: attachment.content_type,
-    }
+      return {
+        sgid: attachment.attachable_sgid,
+        filename: attachment.filename,
+        contentType: attachment.content_type,
+      }
+    })
   }
 
   /**
    * Submit a bug report to Basecamp as a to-do or card
    */
   async submitReport(report: BugReport): Promise<SubmissionResult> {
-    const { accessToken, accountId, destinationType } = await this.getCredentials()
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId, destinationType } = await this.getCredentials()
 
-    if (!report.subDestinationId) {
-      const itemType = destinationType === 'card' ? 'card table column' : 'to-do list'
-      throw new IntegrationError(
-        `Basecamp requires selecting a ${itemType}`,
-        'basecamp'
-      )
-    }
+      if (!report.subDestinationId) {
+        const itemType = destinationType === 'card' ? 'card table column' : 'to-do list'
+        throw new IntegrationError(
+          `Basecamp requires selecting a ${itemType}`,
+          'basecamp'
+        )
+      }
 
-    const subDestId = parseInt(report.subDestinationId, 10)
+      const subDestId = parseInt(report.subDestinationId, 10)
 
-    // Upload the image first
-    const filename = `screenshot-${Date.now()}.png`
-    const upload = await this.uploadImage(report.imageDataUrl, filename)
+      // Upload the image first
+      const filename = `screenshot-${Date.now()}.png`
+      const upload = await this.uploadImage(report.imageDataUrl, filename)
 
-    // Build the content with description (which already includes metadata) and embedded image
-    // Note: report.description already contains metadataHtml from the AnnotatePage
-    const content = `
+      // Build the content with description (which already includes metadata) and embedded image
+      // Note: report.description already contains metadataHtml from the AnnotatePage
+      const content = `
 ${report.description || report.metadataHtml}
 ${this.getImageEmbedHtml(upload)}
 `.trim()
 
-    if (destinationType === 'card') {
-      // Create a card
-      const card = await createCard(accessToken, accountId, subDestId, {
-        title: report.title,
-        content,
-      })
+      if (destinationType === 'card') {
+        // Create a card
+        const card = await createCard(accessToken, accountId, subDestId, {
+          title: report.title,
+          content,
+        })
 
-      return {
-        id: card.id.toString(),
-        url: card.app_url,
-        title: card.title,
-      }
-    } else {
-      // Create a to-do (default)
-      const todo = await createTodo(accessToken, accountId, subDestId, {
-        content: report.title,
-        description: content,
-      })
+        return {
+          id: card.id.toString(),
+          url: card.app_url,
+          title: card.title,
+        }
+      } else {
+        // Create a to-do (default)
+        const todo = await createTodo(accessToken, accountId, subDestId, {
+          content: report.title,
+          description: content,
+        })
 
-      return {
-        id: todo.id.toString(),
-        url: todo.app_url,
-        title: todo.content,
+        return {
+          id: todo.id.toString(),
+          url: todo.app_url,
+          title: todo.content,
+        }
       }
-    }
+    })
   }
 
   /**
@@ -214,6 +222,29 @@ ${this.getImageEmbedHtml(upload)}
   }
 
   // ============ Private helpers ============
+
+  /**
+   * Run a Basecamp API call and convert 401 responses (e.g. "OAuth token
+   * expired (old age)" when the server rejects a token that refresh can't
+   * rescue) into the same canonical IntegrationError that the local refresh
+   * failure branch throws, so the UI has a single shape to react to.
+   */
+  private async withAuthErrorHandling<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (err) {
+      if (err instanceof IntegrationError) throw err
+      const status = (err as { status?: number } | null)?.status
+      if (status === 401) {
+        throw new IntegrationError(
+          'Basecamp session expired. Please reconnect in Settings.',
+          'basecamp',
+          401
+        )
+      }
+      throw err
+    }
+  }
 
   /**
    * Get the stored credentials, refreshing the token if expired.

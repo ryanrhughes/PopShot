@@ -60,7 +60,7 @@ export function Options() {
       </main>
 
       <footer className="options-footer">
-        <p>PopShot v0.1.1</p>
+        <p>PopShot v0.2.3</p>
       </footer>
     </div>
   )
@@ -161,6 +161,12 @@ function FizzySettings({ credentials, onUpdate }: FizzySettingsProps) {
         Connect to Fizzy to send bug reports. You'll need a Personal Access Token with Read + Write permissions.
       </p>
 
+      {message && (
+        <div className={`message ${message.type}`}>
+          {message.text}
+        </div>
+      )}
+
       {!hasStoredKey && (
         <div className="api-key-instructions">
           <h3>How to get your API key:</h3>
@@ -218,12 +224,6 @@ function FizzySettings({ credentials, onUpdate }: FizzySettingsProps) {
             </button>
           </div>
         </>
-      )}
-
-      {message && (
-        <div className={`message ${message.type}`}>
-          {message.text}
-        </div>
       )}
     </section>
   )
@@ -366,6 +366,12 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
         Connect to Basecamp to create to-dos with screenshots directly in your projects.
       </p>
 
+      {message && (
+        <div className={`message ${message.type}`}>
+          {message.text}
+        </div>
+      )}
+
       {connecting && (
         <div className="connecting-state">
           <div className="spinner-small" />
@@ -461,12 +467,6 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
             </button>
           </div>
         </>
-      )}
-
-      {message && (
-        <div className={`message ${message.type}`}>
-          {message.text}
-        </div>
       )}
     </section>
   )

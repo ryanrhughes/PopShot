@@ -956,6 +956,12 @@ body {
   justify-content: space-between;
 }
 
+.destination-selector.error .error-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .destination-selector.error button {
   padding: 4px 12px;
   font-size: 12px;

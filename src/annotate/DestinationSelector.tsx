@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { 
+import {
   getIntegration,
+  IntegrationError,
   type IntegrationType,
   type Destination,
   type SubDestination,
@@ -43,6 +44,7 @@ export function DestinationSelector({
   const [loading, setLoading] = useState(false)
   const [loadingSub, setLoadingSub] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorStatus, setErrorStatus] = useState<number | null>(null)
   const [requiresSubDestination, setRequiresSubDestination] = useState(false)
   const [basecampDestinationType, setBasecampDestinationType] = useState<BasecampDestinationType>('todo')
   
@@ -92,6 +94,7 @@ export function DestinationSelector({
     
     setLoading(true)
     setError(null)
+    setErrorStatus(null)
     setDestinations([])
     setSelectedDestination(null)
     setSubDestinations([])
@@ -129,6 +132,7 @@ export function DestinationSelector({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load destinations')
+      setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
     } finally {
       setLoading(false)
     }
@@ -295,7 +299,14 @@ export function DestinationSelector({
     return (
       <div className="destination-selector error">
         <span>{error}</span>
-        <button onClick={loadDestinations}>Retry</button>
+        <div className="error-actions">
+          {errorStatus === 401 && (
+            <button onClick={() => chrome.runtime.openOptionsPage()}>
+              Open Settings
+            </button>
+          )}
+          <button onClick={loadDestinations}>Retry</button>
+        </div>
       </div>
     )
   }

@@ -3,6 +3,8 @@
  * Handles screenshot capture, API requests, and coordinates messaging between components
  */
 
+import { parseApiErrorMessage } from './api-error'
+
 const FIZZY_API_BASE = 'https://app.fizzy.do'
 const BASECAMP_API_BASE = 'https://3.basecampapi.com'
 const BASECAMP_AUTH_BASE = 'https://launchpad.37signals.com'
@@ -251,21 +253,7 @@ async function handleApiRequest(message: ApiRequestMessage): Promise<ApiResult> 
   
   if (!response.ok) {
     const rawBody = await response.text()
-    let errorMessage = `API error: ${response.status} ${response.statusText}`
-    try {
-      const errorData = JSON.parse(rawBody)
-      if (typeof errorData === 'object' && errorData !== null) {
-        errorMessage = Object.entries(errorData as Record<string, unknown>)
-          .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-          .join(', ')
-      }
-    } catch {
-      // If not JSON, use raw body
-      if (rawBody) {
-        errorMessage = rawBody.substring(0, 500)
-      }
-    }
-    
+    const errorMessage = parseApiErrorMessage(response.status, response.statusText, rawBody)
     const error = new Error(errorMessage) as Error & { status: number }
     error.status = response.status
     throw error
