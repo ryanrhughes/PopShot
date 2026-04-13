@@ -136,7 +136,7 @@ function escapeHtml(str: string): string {
     "'": '&#39;',
   }
   
-  return str.replace(/[&<>"']/g, (char) => htmlEntities[char] || char)
+  return str.replace(/[&<>"']/g, (char) => htmlEntities[char])
 }
 
 /**
@@ -154,3 +154,7 @@ export function generateDefaultTitle(metadata: PageMetadata): string {
   
   return `Feedback on ${domain}`
 }
+
+// Internal test hooks
+export const __test_escapeHtml = escapeHtml
+export const __test_getCurrentTabInfo = getCurrentTabInfo

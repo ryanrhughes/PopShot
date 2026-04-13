@@ -382,3 +382,6 @@ ${metadata}
   
   return { card, cardUrl: card.url }
 }
+
+// Internal test hook
+export const __test_swFetch = swFetch

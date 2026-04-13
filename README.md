@@ -95,10 +95,26 @@ A Chrome browser extension for capturing, annotating, and sending screenshot fee
 - **Delete/Backspace** - Delete selected annotation
 - **Escape** - Cancel crop
 
+## Testing
+
+The project uses [Vitest](https://vitest.dev/) for unit testing.
+
+```bash
+# Run tests in watch mode
+npm test
+
+# Run tests once
+npm run test:run
+
+# Run tests with coverage report
+npm run test:coverage
+```
+
 ## Tech Stack
 
 - **Framework**: React 18 + TypeScript
 - **Build Tool**: Vite + @crxjs/vite-plugin
+- **Testing**: Vitest + Testing Library
 - **Manifest**: Chrome Extension Manifest V3
 - **Canvas**: Fabric.js
 - **Storage**: Chrome Storage API
