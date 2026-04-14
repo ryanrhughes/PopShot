@@ -25,11 +25,27 @@ import {
   createCard,
   dataUrlToArrayBuffer,
   refreshAccessToken,
+  BasecampApiError,
   type BasecampProject,
   type BasecampTodoList,
   type BasecampCardColumn,
 } from '../basecamp-api'
 import { getIntegrationCredentials, setBasecampCredentials } from '../storage'
+
+/**
+ * Canonical error messages for the two OAuth recovery paths.
+ *
+ * SESSION_EXPIRED_MESSAGE: the refresh token is dead or the access token was
+ * rejected. Inline Reconnect recovers this.
+ *
+ * INVALID_CLIENT_MESSAGE: the client_id/client_secret themselves are bad
+ * (admin rotated them, app was revoked in launchpad). Inline Reconnect
+ * would loop forever; the user has to reconfigure in Settings.
+ */
+export const BASECAMP_SESSION_EXPIRED_MESSAGE =
+  'Your Basecamp session has expired. Sign in again to continue.'
+export const BASECAMP_INVALID_CLIENT_MESSAGE =
+  'Basecamp credentials need to be reconfigured in Settings.'
 
 /**
  * Basecamp integration implementation
@@ -105,6 +121,36 @@ export class BasecampIntegration implements Integration {
         // Default to to-do lists
         const todoLists = await getProjectTodoLists(accessToken, accountId, projectIdNum)
         return todoLists.map(list => this.todoListToSubDestination(list, projectId))
+      }
+    })
+  }
+
+  /**
+   * Probe which destination types (to-do lists / card columns) a project has
+   * enabled. Runs both lookups through getCredentials() + withAuthErrorHandling
+   * so a stale token triggers the proactive refresh and a revoked token
+   * surfaces as the canonical session_expired IntegrationError instead of an
+   * empty-state false negative in the UI.
+   *
+   * Both lookups succeed-or-fail together; per-call swallowing (the old
+   * pattern) masked auth/server errors as "no destinations available".
+   */
+  async getProjectAvailability(projectId: string): Promise<{
+    hasTodoLists: boolean
+    hasCardColumns: boolean
+  }> {
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId } = await this.getCredentials()
+      const projectIdNum = parseInt(projectId, 10)
+
+      const [todoLists, cardColumns] = await Promise.all([
+        getProjectTodoLists(accessToken, accountId, projectIdNum),
+        getProjectCardColumns(accessToken, accountId, projectIdNum),
+      ])
+
+      return {
+        hasTodoLists: todoLists.length > 0,
+        hasCardColumns: cardColumns.length > 0,
       }
     })
   }
@@ -228,6 +274,10 @@ ${this.getImageEmbedHtml(upload)}
    * expired (old age)" when the server rejects a token that refresh can't
    * rescue) into the same canonical IntegrationError that the local refresh
    * failure branch throws, so the UI has a single shape to react to.
+   *
+   * The error carries `code: 'session_expired'` so UI surfaces can render the
+   * inline reconnect component (as opposed to `'invalid_client'`, which
+   * routes to Settings).
    */
   private async withAuthErrorHandling<T>(fn: () => Promise<T>): Promise<T> {
     try {
@@ -237,9 +287,10 @@ ${this.getImageEmbedHtml(upload)}
       const status = (err as { status?: number } | null)?.status
       if (status === 401) {
         throw new IntegrationError(
-          'Basecamp session expired. Please reconnect in Settings.',
+          BASECAMP_SESSION_EXPIRED_MESSAGE,
           'basecamp',
-          401
+          401,
+          'session_expired'
         )
       }
       throw err
@@ -271,16 +322,19 @@ ${this.getImageEmbedHtml(upload)}
       
       if (expiresAt <= fiveMinutesFromNow) {
         // Token expired or expiring soon - refresh it
+        console.log(
+          `[Basecamp] Access token ${expiresAt <= new Date() ? 'expired' : 'expiring soon'} (expiresAt=${bc.expiresAt}), refreshing...`
+        )
         try {
           const tokenData = await refreshAccessToken(
             bc.refreshToken,
             bc.clientId,
             bc.clientSecret
           )
-          
+
           // Calculate new expiration time
           const newExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-          
+
           // Update stored credentials
           await setBasecampCredentials({
             ...bc,
@@ -288,14 +342,34 @@ ${this.getImageEmbedHtml(upload)}
             refreshToken: tokenData.refresh_token,
             expiresAt: newExpiresAt,
           })
-          
+
+          console.log(
+            `[Basecamp] Access token refreshed successfully, new expiresAt=${newExpiresAt} (in ${Math.round(tokenData.expires_in / 60)} min)`
+          )
+
           accessToken = tokenData.access_token
         } catch (error) {
-          // If refresh fails, throw an error indicating re-auth is needed
+          console.warn('[Basecamp] Access token refresh failed:', error)
+          // Distinguish the two OAuth recovery paths. invalid_client means
+          // the app credentials themselves are bad (admin rotated the secret
+          // or revoked the app), so inline reconnect would loop forever - the
+          // user needs Settings. Every other failure (invalid_grant, network
+          // error, unexpected shape) is treated as a session expiry that an
+          // inline reconnect can recover from; the user can fall back to
+          // Settings if reconnect keeps failing.
+          if (error instanceof BasecampApiError && error.errorCode === 'invalid_client') {
+            throw new IntegrationError(
+              BASECAMP_INVALID_CLIENT_MESSAGE,
+              'basecamp',
+              error.status,
+              'invalid_client'
+            )
+          }
           throw new IntegrationError(
-            'Basecamp session expired. Please reconnect in Settings.',
+            BASECAMP_SESSION_EXPIRED_MESSAGE,
             'basecamp',
-            401
+            401,
+            'session_expired'
           )
         }
       }
