@@ -160,15 +160,35 @@ function normalizeSlug(slug: string): string {
 }
 
 /**
+ * Fetch all pages of a paginated Fizzy API endpoint.
+ * The Fizzy API returns a JSON array per page and supports ?page=N (1-indexed).
+ * We keep fetching until a page returns an empty array.
+ */
+async function fetchAllPages<T>(url: string, headers: Record<string, string>): Promise<T[]> {
+  const results: T[] = []
+  let page = 1
+  const MAX_PAGES = 50 // safety limit
+
+  while (page <= MAX_PAGES) {
+    const separator = url.includes('?') ? '&' : '?'
+    const { data } = await swFetch(`${url}${separator}page=${page}`, { headers })
+    const items = data as T[]
+
+    if (!Array.isArray(items) || items.length === 0) break
+
+    results.push(...items)
+    page++
+  }
+
+  return results
+}
+
+/**
  * Get boards for an account
  */
 export async function getBoards(apiKey: string, accountSlug: string): Promise<Board[]> {
   const slug = normalizeSlug(accountSlug)
-  const { data } = await swFetch(`${FIZZY_API_BASE}/${slug}/boards`, {
-    headers: createHeaders(apiKey),
-  })
-  
-  return data as Board[]
+  return fetchAllPages<Board>(`${FIZZY_API_BASE}/${slug}/boards`, createHeaders(apiKey))
 }
 
 /**
@@ -176,11 +196,7 @@ export async function getBoards(apiKey: string, accountSlug: string): Promise<Bo
  */
 export async function getTags(apiKey: string, accountSlug: string): Promise<Tag[]> {
   const slug = normalizeSlug(accountSlug)
-  const { data } = await swFetch(`${FIZZY_API_BASE}/${slug}/tags`, {
-    headers: createHeaders(apiKey),
-  })
-  
-  return data as Tag[]
+  return fetchAllPages<Tag>(`${FIZZY_API_BASE}/${slug}/tags`, createHeaders(apiKey))
 }
 
 /**
