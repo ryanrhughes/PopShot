@@ -1,6 +1,6 @@
 {
   "name": "popshot",
-  "version": "0.2.3",
+  "version": "0.2.0",
   "description": "Capture, annotate, and send screenshot feedback directly to Fizzy",
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "release": "vitest run && tsc && vite build && cd dist && zip -r ../popshot.zip . && cd .. && echo '\nRelease built: popshot.zip'"
   },
   "dependencies": {
     "fabric": "^6.9.1",
