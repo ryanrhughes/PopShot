@@ -61,6 +61,7 @@ export const chromeMock = {
       addListener: vi.fn(),
     },
     getURL: vi.fn((path: string) => `chrome-extension://mock-id/${path}`),
+    openOptionsPage: vi.fn(async () => {}),
   },
   tabs: {
     query: vi.fn(async () => []),
