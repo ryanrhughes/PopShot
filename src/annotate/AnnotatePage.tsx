@@ -5,12 +5,14 @@ import { IntegrationSelector } from './IntegrationSelector'
 import { DestinationSelector } from './DestinationSelector'
 import { TagSelector } from './TagSelector'
 import { formatMetadataAsHtml, generateDefaultTitle, type PageMetadata } from '@/lib/metadata'
-import { 
+import {
   getIntegration,
+  IntegrationError,
   type IntegrationType,
   type Destination,
   type SubDestination,
 } from '@/lib/integrations'
+import { BasecampSessionExpired } from '@/components/BasecampSessionExpired'
 
 type AnnotationTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'freehand' | 'pixelate' | 'crop'
 type AppState = 'loading' | 'annotating' | 'submitting' | 'error'
@@ -48,6 +50,12 @@ export function AnnotatePage() {
   const [cardDescription, setCardDescription] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  // When the last submit attempt failed with a Basecamp auth error, this is
+  // the error code. Rendered as an inline reconnect banner so the user
+  // doesn't have to leave the annotation and lose their draft.
+  const [basecampAuthError, setBasecampAuthError] = useState<
+    'session_expired' | 'invalid_client' | null
+  >(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
   const [annotatedImageData, setAnnotatedImageData] = useState<string | null>(null)
   const [zoom, setZoom] = useState(100)
@@ -865,7 +873,20 @@ export function AnnotatePage() {
       window.close()
     } catch (err) {
       console.error('Submit error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to submit feedback')
+      // Basecamp auth errors get inline-reconnect UI instead of a raw error
+      // string. Preserves the user's draft (React state is untouched across
+      // the OAuth popup) and removes the Settings round-trip.
+      if (
+        err instanceof IntegrationError &&
+        err.integration === 'basecamp' &&
+        (err.code === 'session_expired' || err.code === 'invalid_client')
+      ) {
+        setBasecampAuthError(err.code)
+        setError(null)
+      } else {
+        setBasecampAuthError(null)
+        setError(err instanceof Error ? err.message : 'Failed to submit feedback')
+      }
       setState('annotating') // Go back to annotating state so user can retry
     }
   }
@@ -1034,7 +1055,19 @@ export function AnnotatePage() {
         </div>
 
         <div className="sidebar-content">
-          {error && (
+          {basecampAuthError && (
+            <BasecampSessionExpired
+              kind={basecampAuthError}
+              onReconnected={() => {
+                // Clear the banner so the submit button re-enables; the user
+                // can manually click Submit again (auto-replay of the failed
+                // action is deliberately deferred - see the parked feature
+                // brief for Proposal #2).
+                setBasecampAuthError(null)
+              }}
+            />
+          )}
+          {error && !basecampAuthError && (
             <div className="error-message">{error}</div>
           )}
 

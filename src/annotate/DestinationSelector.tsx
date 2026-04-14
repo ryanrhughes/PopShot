@@ -2,21 +2,19 @@ import { useState, useEffect } from 'react'
 import {
   getIntegration,
   IntegrationError,
+  basecampIntegration,
   type IntegrationType,
   type Destination,
   type SubDestination,
   type BasecampDestinationType,
 } from '../lib/integrations'
-import { 
-  getIntegrationCredentials, 
-  getLastUsedDestination, 
+import { BasecampSessionExpired } from '../components/BasecampSessionExpired'
+import {
+  getIntegrationCredentials,
+  getLastUsedDestination,
   setLastUsedDestination,
   setBasecampCredentials,
 } from '../lib/storage'
-import {
-  getProjectTodoLists,
-  getProjectCardColumns,
-} from '../lib/basecamp-api'
 
 interface DestinationSelectorProps {
   integrationType: IntegrationType | null
@@ -45,6 +43,11 @@ export function DestinationSelector({
   const [loadingSub, setLoadingSub] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [errorStatus, setErrorStatus] = useState<number | null>(null)
+  // When loadDestinations fails with a Basecamp auth error, this is the code.
+  // Rendered as an inline reconnect banner in place of the plain error UI.
+  const [basecampAuthError, setBasecampAuthError] = useState<
+    'session_expired' | 'invalid_client' | null
+  >(null)
   const [requiresSubDestination, setRequiresSubDestination] = useState(false)
   const [basecampDestinationType, setBasecampDestinationType] = useState<BasecampDestinationType>('todo')
   
@@ -95,6 +98,7 @@ export function DestinationSelector({
     setLoading(true)
     setError(null)
     setErrorStatus(null)
+    setBasecampAuthError(null)
     setDestinations([])
     setSelectedDestination(null)
     setSubDestinations([])
@@ -131,37 +135,38 @@ export function DestinationSelector({
         setSelectedDestination(dests[0])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load destinations')
-      setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
+      if (
+        err instanceof IntegrationError &&
+        err.integration === 'basecamp' &&
+        (err.code === 'session_expired' || err.code === 'invalid_client')
+      ) {
+        setBasecampAuthError(err.code)
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load destinations')
+        setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  // Check which destination types are available for a Basecamp project
+  // Check which destination types are available for a Basecamp project.
+  // Routes through BasecampIntegration so an expired/revoked token triggers
+  // the proactive refresh and, if that fails, surfaces as an IntegrationError
+  // the UI can render as a reconnect banner - rather than the old behavior
+  // of swallowing every failure as "no destinations available".
   const checkBasecampAvailability = async (projectId: string) => {
     setCheckingAvailability(true)
     setHasTodoLists(false)
     setHasCardColumns(false)
     setSubDestinations([])
     setSelectedSubDestination(null)
+    setError(null)
+    setErrorStatus(null)
 
     try {
-      const creds = await getIntegrationCredentials()
-      if (!creds.basecamp?.accessToken || !creds.basecamp?.accountId) return
-
-      const accessToken = creds.basecamp.accessToken
-      const accountId = parseInt(creds.basecamp.accountId, 10)
-      const projectIdNum = parseInt(projectId, 10)
-
-      // Check both in parallel
-      const [todoLists, cardColumns] = await Promise.all([
-        getProjectTodoLists(accessToken, accountId, projectIdNum).catch(() => []),
-        getProjectCardColumns(accessToken, accountId, projectIdNum).catch(() => []),
-      ])
-
-      const hasTodos = todoLists.length > 0
-      const hasCards = cardColumns.length > 0
+      const { hasTodoLists: hasTodos, hasCardColumns: hasCards } =
+        await basecampIntegration.getProjectAvailability(projectId)
 
       setHasTodoLists(hasTodos)
       setHasCardColumns(hasCards)
@@ -170,22 +175,15 @@ export function DestinationSelector({
       let effectiveType = basecampDestinationType
 
       // If current type is not available, switch to the other
-      if (effectiveType === 'todo' && !hasTodos && hasCards) {
+      const creds = await getIntegrationCredentials()
+      if (effectiveType === 'todo' && !hasTodos && hasCards && creds.basecamp) {
         effectiveType = 'card'
         setBasecampDestinationType('card')
-        // Save the preference
-        await setBasecampCredentials({
-          ...creds.basecamp,
-          destinationType: 'card',
-        })
-      } else if (effectiveType === 'card' && !hasCards && hasTodos) {
+        await setBasecampCredentials({ ...creds.basecamp, destinationType: 'card' })
+      } else if (effectiveType === 'card' && !hasCards && hasTodos && creds.basecamp) {
         effectiveType = 'todo'
         setBasecampDestinationType('todo')
-        // Save the preference
-        await setBasecampCredentials({
-          ...creds.basecamp,
-          destinationType: 'todo',
-        })
+        await setBasecampCredentials({ ...creds.basecamp, destinationType: 'todo' })
       }
 
       // Now load the appropriate sub-destinations
@@ -193,7 +191,16 @@ export function DestinationSelector({
         loadSubDestinations(projectId)
       }
     } catch (err) {
-      console.error('Failed to check Basecamp availability:', err)
+      if (
+        err instanceof IntegrationError &&
+        err.integration === 'basecamp' &&
+        (err.code === 'session_expired' || err.code === 'invalid_client')
+      ) {
+        setBasecampAuthError(err.code)
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to check project destinations')
+        setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
+      }
     } finally {
       setCheckingAvailability(false)
     }
@@ -228,7 +235,20 @@ export function DestinationSelector({
         setSelectedSubDestination(subs[0])
       }
     } catch (err) {
-      console.error('Failed to load sub-destinations:', err)
+      // Auth failures here (e.g. refresh token revoked between the initial
+      // project load and the sub-destination load) must surface as the
+      // reconnect banner, otherwise the required sub-destination select
+      // stays empty and the user can't submit without any explanation.
+      if (
+        err instanceof IntegrationError &&
+        err.integration === 'basecamp' &&
+        (err.code === 'session_expired' || err.code === 'invalid_client')
+      ) {
+        setBasecampAuthError(err.code)
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load sub-destinations')
+        setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
+      }
     } finally {
       setLoadingSub(false)
     }
@@ -291,6 +311,21 @@ export function DestinationSelector({
       <div className="destination-selector loading">
         <div className="spinner-small" />
         <span>Loading {integrationType === 'fizzy' ? 'boards' : 'projects'}...</span>
+      </div>
+    )
+  }
+
+  if (basecampAuthError) {
+    return (
+      <div className="destination-selector">
+        <BasecampSessionExpired
+          kind={basecampAuthError}
+          onReconnected={() => {
+            // Successful reconnect: reload destinations with the fresh token.
+            setBasecampAuthError(null)
+            loadDestinations()
+          }}
+        />
       </div>
     )
   }

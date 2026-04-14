@@ -250,9 +250,14 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [testing, setTesting] = useState(false)
-  
+  // Set true only when the user runs Test Connection and it fails, so the
+  // Reconnect shortcut is hidden in the happy path and only appears when the
+  // user has a reason to recover without disconnecting + reconnecting.
+  const [testFailed, setTestFailed] = useState(false)
+
   const isConnected = !!(credentials?.accessToken)
   const isExpired = credentials?.expiresAt && new Date(credentials.expiresAt) <= new Date()
+  const showReconnect = isConnected && (isExpired || testFailed)
 
   // Update local state when credentials change
   useEffect(() => {
@@ -296,6 +301,7 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
 
       if (response?.success) {
         setMessage({ type: 'success', text: `Connected to Basecamp as ${response.accountName}!` })
+        setTestFailed(false)
         onUpdate()
       } else {
         throw new Error(response?.error || 'Failed to connect to Basecamp')
@@ -330,16 +336,18 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
 
       if (response?.success) {
         const projectCount = response.projectCount ?? 0
-        setMessage({ 
-          type: 'success', 
-          text: `Connected! Found ${projectCount} project${projectCount === 1 ? '' : 's'}.` 
+        setMessage({
+          type: 'success',
+          text: `Connected! Found ${projectCount} project${projectCount === 1 ? '' : 's'}.`
         })
+        setTestFailed(false)
       } else {
         throw new Error(response?.error || 'Failed to test connection')
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to connect to Basecamp'
       setMessage({ type: 'error', text: errorMessage })
+      setTestFailed(true)
     } finally {
       setTesting(false)
     }
@@ -387,25 +395,26 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
           )}
 
           <div className="button-group">
-            {isExpired && (
-              <button 
-                className="primary-btn" 
-                onClick={handleConnect}
-              >
-                Reconnect
-              </button>
-            )}
             {!isExpired && (
-              <button 
-                className="secondary-btn" 
+              <button
+                className="secondary-btn"
                 onClick={handleTest}
                 disabled={testing}
               >
                 {testing ? 'Testing...' : 'Test Connection'}
               </button>
             )}
-            <button 
-              className="danger-btn" 
+            {showReconnect && (
+              <button
+                className={isExpired ? 'primary-btn' : 'secondary-btn'}
+                onClick={handleConnect}
+                disabled={connecting}
+              >
+                Reconnect
+              </button>
+            )}
+            <button
+              className="danger-btn"
               onClick={handleDisconnect}
             >
               Disconnect

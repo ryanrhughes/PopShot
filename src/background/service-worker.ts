@@ -4,6 +4,7 @@
  */
 
 import { parseApiErrorMessage } from './api-error'
+import { parseOAuthErrorCode, type OAuthErrorCode } from './oauth-error'
 
 const FIZZY_API_BASE = 'https://app.fizzy.do'
 const BASECAMP_API_BASE = 'https://3.basecampapi.com'
@@ -62,9 +63,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (error.status !== 403) {
           console.error('API request failed:', error)
         }
-        sendResponse({ success: false, error: error.message, status: error.status })
+        sendResponse({
+          success: false,
+          error: error.message,
+          status: error.status,
+          // errorCode is populated only for OAuth token-endpoint failures so
+          // callers can distinguish invalid_grant (inline reconnect) from
+          // invalid_client (must reconfigure in Settings).
+          errorCode: error.errorCode,
+        })
       })
-    
+
     return true
   }
 
@@ -91,12 +100,28 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   // Handle Basecamp OAuth start (full flow including launchWebAuthFlow)
   if (message.action === 'basecampOAuthStart') {
-    handleBasecampOAuthStart(message.clientId, message.redirectUri)
+    runSingleFlightOAuth(() => handleBasecampOAuthStart(message.clientId, message.redirectUri))
       .then((result) => {
         sendResponse({ success: true, accountName: result.accountName })
       })
       .catch((error) => {
         console.error('Basecamp OAuth start failed:', error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true
+  }
+
+  // Inline reconnect: any UI surface (annotate, popup, options) can call this
+  // when the stored session expires. Reads the stored clientId/redirectUri so
+  // callers don't need to plumb them; coalesces concurrent callers into one
+  // OAuth popup via runSingleFlightOAuth.
+  if (message.action === 'basecampOAuthReconnect') {
+    runSingleFlightOAuth(handleBasecampOAuthReconnect)
+      .then((result) => {
+        sendResponse({ success: true, accountName: result.accountName })
+      })
+      .catch((error) => {
+        console.error('Basecamp OAuth reconnect failed:', error)
         sendResponse({ success: false, error: error.message })
       })
     return true
@@ -239,27 +264,59 @@ async function handleApiRequest(message: ApiRequestMessage): Promise<ApiResult> 
     }
   }
   
+  // The refresh path goes through swFetch -> here. Log both edges from the SW
+  // so the refresh is observable in chrome://extensions -> Service Worker
+  // without having to open DevTools on the annotate tab. Inspect grant_type
+  // to label refresh vs initial code exchange.
+  const isTokenEndpoint = url.startsWith(`${BASECAMP_AUTH_BASE}/authorization/token`)
+  let tokenOp: 'refresh' | 'exchange' | 'token' = 'token'
+  if (isTokenEndpoint) {
+    if (typeof body === 'string' && body.includes('"grant_type":"refresh_token"')) {
+      tokenOp = 'refresh'
+    } else if (typeof body === 'string' && body.includes('"grant_type":"authorization_code"')) {
+      tokenOp = 'exchange'
+    }
+    console.log(`[Basecamp SW] Access token ${tokenOp}: ${method} ${url}`)
+  }
+
   const response = await fetch(url, {
     method,
     headers: headersWithOrigin,
     body: fetchBody,
     credentials: 'omit', // Don't send cookies - use only Bearer token auth
   })
-  
+
   const location = response.headers.get('Location') || undefined
-  
+
   // Collect response headers
   const responseHeaders: Record<string, string> = {}
   response.headers.forEach((value, key) => {
     responseHeaders[key] = value
   })
-  
+
   if (!response.ok) {
     const rawBody = await response.text()
     const errorMessage = parseApiErrorMessage(response.status, response.statusText, rawBody)
-    const error = new Error(errorMessage) as Error & { status: number }
+    const error = new Error(errorMessage) as Error & {
+      status: number
+      errorCode?: OAuthErrorCode
+    }
     error.status = response.status
+    // For OAuth token-endpoint failures, extract the standard OAuth error
+    // code so upstream code can branch on invalid_grant vs invalid_client
+    // without re-parsing the already-flattened message string.
+    if (isTokenEndpoint) {
+      error.errorCode = parseOAuthErrorCode(rawBody)
+      console.warn(
+        `[Basecamp SW] Access token ${tokenOp} FAILED: status=${response.status} errorCode=${error.errorCode ?? 'unknown'}`
+      )
+    }
     throw error
+  }
+
+  if (isTokenEndpoint) {
+    const label = tokenOp === 'refresh' ? 'refreshed' : tokenOp === 'exchange' ? 'exchanged' : 'token ok'
+    console.log(`[Basecamp SW] Access token ${label} (status=${response.status})`)
   }
   
   // Handle empty responses (like 201 Created or 204 No Content)
@@ -478,6 +535,22 @@ function generateOAuthState(): string {
 // Store OAuth state temporarily for validation
 let pendingOAuthState: string | null = null
 
+// In-flight OAuth promise. Multiple UI surfaces hitting 401 simultaneously
+// (e.g. a double-click, or annotate + options both racing) must coalesce
+// into a single launchWebAuthFlow popup - two popups would confuse the user
+// and the second would likely fail Chrome's identity API contract.
+let inFlightOAuth: Promise<{ accountName: string }> | null = null
+
+function runSingleFlightOAuth(
+  fn: () => Promise<{ accountName: string }>
+): Promise<{ accountName: string }> {
+  if (inFlightOAuth) return inFlightOAuth
+  inFlightOAuth = fn().finally(() => {
+    inFlightOAuth = null
+  })
+  return inFlightOAuth
+}
+
 async function handleBasecampOAuthStart(clientId: string, redirectUri: string): Promise<{ accountName: string }> {
   // Generate state parameter for CSRF protection
   const state = generateOAuthState()
@@ -533,6 +606,34 @@ async function handleBasecampOAuthStart(clientId: string, redirectUri: string): 
 
   // Exchange code for tokens
   return handleBasecampOAuthExchange(code, redirectUri)
+}
+
+/**
+ * Re-run the OAuth authorization flow using already-stored client credentials.
+ *
+ * Used by the inline "Reconnect" affordance on UI surfaces that hit a 401.
+ * Reads clientId + redirectUri from storage so callers don't need to plumb
+ * them; otherwise identical to handleBasecampOAuthStart. If the client
+ * credentials aren't configured at all (e.g. user never connected), rejects
+ * so the UI can steer the user to Settings.
+ */
+async function handleBasecampOAuthReconnect(): Promise<{ accountName: string }> {
+  const { integrationCredentials } = await chrome.storage.local.get('integrationCredentials')
+  const clientId = integrationCredentials?.basecamp?.clientId
+
+  if (!clientId) {
+    throw new Error(
+      'Basecamp is not configured. Open Settings to enter Client ID, Client Secret, and Redirect URI.'
+    )
+  }
+
+  // Users connected before redirectUri was persisted (or whoever used the
+  // chrome.identity default) won't have a stored redirectUri. Fall back to the
+  // runtime default rather than forcing them through Settings.
+  const redirectUri =
+    integrationCredentials?.basecamp?.redirectUri || chrome.identity.getRedirectURL()
+
+  return handleBasecampOAuthStart(clientId, redirectUri)
 }
 
 async function handleBasecampOAuthExchange(code: string, redirectUri: string): Promise<{ accountName: string }> {
@@ -593,10 +694,13 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
   // Calculate expiration time
   const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
 
-  // Save credentials
+  // Save credentials. redirectUri is persisted so the inline reconnect flow
+  // (which doesn't go through the Options form) can rebuild the authorize URL
+  // without asking the user to re-enter it.
   const credentials = {
     clientId,
     clientSecret,
+    redirectUri,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     expiresAt,

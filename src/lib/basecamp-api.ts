@@ -54,11 +54,12 @@ async function swFetch(
     const error = new BasecampApiError(
       response.error || 'API request failed',
       response.status || 500,
-      'Error'
+      'Error',
+      response.errorCode
     )
     throw error
   }
-  
+
   return { data: response.data, headers: response.headers }
 }
 
@@ -269,11 +270,19 @@ export interface BasecampCard {
   }
 }
 
+/**
+ * Standard OAuth 2.0 error codes surfaced by the Basecamp token endpoint.
+ * Propagated from the service worker so upstream code can branch on them
+ * (invalid_grant => user needs reauth; invalid_client => must reconfigure).
+ */
+export type BasecampOAuthErrorCode = 'invalid_grant' | 'invalid_client'
+
 export class BasecampApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public statusText: string
+    public statusText: string,
+    public errorCode?: BasecampOAuthErrorCode
   ) {
     super(message)
     this.name = 'BasecampApiError'
