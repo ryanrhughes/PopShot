@@ -153,7 +153,8 @@ describe('fizzy-api', () => {
       setMessageHandler((message: unknown) => {
         const msg = message as { url: string }
         if (msg.url.includes('/boards')) {
-          return { success: true, data: mockBoards }
+          // Return data on page 1, empty array on subsequent pages
+          return { success: true, data: msg.url.includes('page=1') || !msg.url.includes('page=') ? mockBoards : [] }
         }
         return { success: false }
       })
@@ -168,12 +169,15 @@ describe('fizzy-api', () => {
       setMessageHandler((message: unknown) => {
         const msg = message as { url: string }
         capturedUrl = msg.url
+        if (msg.url.includes('/boards')) {
+          return { success: true, data: msg.url.includes('page=1') ? mockBoards : [] }
+        }
         return { success: true, data: mockBoards }
       })
 
       await getBoards('api-key', '/test-account')
 
-      expect(capturedUrl).toBe('https://app.fizzy.do/test-account/boards')
+      expect(capturedUrl).toContain('https://app.fizzy.do/test-account/boards')
     })
   })
 
@@ -182,7 +186,7 @@ describe('fizzy-api', () => {
       setMessageHandler((message: unknown) => {
         const msg = message as { url: string }
         if (msg.url.includes('/tags')) {
-          return { success: true, data: mockTags }
+          return { success: true, data: msg.url.includes('page=1') || !msg.url.includes('page=') ? mockTags : [] }
         }
         return { success: false }
       })
@@ -197,12 +201,15 @@ describe('fizzy-api', () => {
       setMessageHandler((message: unknown) => {
         const msg = message as { url: string }
         capturedUrl = msg.url
+        if (msg.url.includes('/tags')) {
+          return { success: true, data: msg.url.includes('page=1') ? mockTags : [] }
+        }
         return { success: true, data: mockTags }
       })
 
       await getTags('api-key', '/test-account')
 
-      expect(capturedUrl).toBe('https://app.fizzy.do/test-account/tags')
+      expect(capturedUrl).toContain('https://app.fizzy.do/test-account/tags')
     })
   })
 
@@ -214,7 +221,7 @@ describe('fizzy-api', () => {
           return { success: true, data: mockIdentityResponse }
         }
         if (msg.url.includes('/boards')) {
-          return { success: true, data: mockBoards }
+          return { success: true, data: msg.url.includes('page=1') ? mockBoards : [] }
         }
         return { success: false }
       })
@@ -235,7 +242,7 @@ describe('fizzy-api', () => {
           return { success: true, data: mockIdentityResponse }
         }
         if (msg.url.includes('/tags')) {
-          return { success: true, data: mockTags }
+          return { success: true, data: msg.url.includes('page=1') ? mockTags : [] }
         }
         return { success: false }
       })
