@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: 'PopShot',
   description: 'Capture, annotate, and send screenshot feedback to Fizzy or Basecamp',
-  version: '0.3.0',
+  version: '0.3.1',
   
   // Extension icon
   icons: {

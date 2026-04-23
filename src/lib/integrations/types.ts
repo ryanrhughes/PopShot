@@ -151,6 +151,12 @@ export interface BasecampDestinationInfo {
   todolistId?: string
   /** ID of the Card Table Column (when destinationType is 'card') */
   columnId?: string
+  /**
+   * ID of the Card Table that the columnId belongs to. Only meaningful when
+   * destinationType is 'card'. Lets the UI restore the exact card table pick
+   * when a project hosts more than one.
+   */
+  cardTableId?: string
 }
 
 /**

@@ -293,7 +293,13 @@ export async function setLastUsedIntegration(
 export async function getLastUsedDestination(
   integration: IntegrationType,
   url?: string
-): Promise<{ destinationId: string; accountId: string; subDestinationId?: string } | null> {
+): Promise<{
+  destinationId: string
+  accountId: string
+  subDestinationId?: string
+  /** Only set for Basecamp card mode */
+  cardTableId?: string
+} | null> {
   const prefs = await getIntegrationPreferences()
   
   // Try URL-specific destination first
@@ -315,6 +321,7 @@ export async function getLastUsedDestination(
             destinationId: urlDest.projectId,
             accountId: urlDest.accountId,
             subDestinationId: urlDest.todolistId || urlDest.columnId,
+            cardTableId: urlDest.cardTableId,
           }
         }
       }
@@ -340,6 +347,7 @@ export async function getLastUsedDestination(
       destinationId: lastUsed.projectId,
       accountId: lastUsed.accountId,
       subDestinationId: lastUsed.todolistId || lastUsed.columnId,
+      cardTableId: lastUsed.cardTableId,
     }
   }
   
@@ -347,14 +355,18 @@ export async function getLastUsedDestination(
 }
 
 /**
- * Set last used destination for an integration and URL
+ * Set last used destination for an integration and URL.
+ *
+ * For Basecamp card mode, pass `cardTableId` so the picker can restore the
+ * exact card table on next launch (a project can host multiple card tables).
  */
 export async function setLastUsedDestination(
   integration: IntegrationType,
   destinationId: string,
   accountId: string,
   subDestinationId?: string,
-  url?: string
+  url?: string,
+  cardTableId?: string
 ): Promise<void> {
   const prefs = await getIntegrationPreferences()
   
@@ -386,6 +398,7 @@ export async function setLastUsedDestination(
             accountId,
             projectId: destinationId,
             columnId: subDestinationId,
+            cardTableId,
           }
         } else {
           prefs.urlDestinations[origin].basecamp = {
@@ -421,6 +434,7 @@ export async function setLastUsedDestination(
           accountId,
           projectId: destinationId,
           columnId: subDestinationId,
+          cardTableId,
         }
       } else {
         prefs.lastUsedDestinations.basecamp = {

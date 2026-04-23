@@ -601,7 +601,21 @@ ${description ? `<p>${description}</p>` : ''}
 // ============ Card Tables ============
 
 /**
- * Get the card table (kanban board) for a project (from the dock)
+ * Summary of a card table within a project. Returned by getProjectCardTables.
+ */
+export interface BasecampCardTableRef {
+  id: number
+  title: string
+  /** API URL (…/card_tables/<id>.json) used to fetch columns via getCardTable */
+  url: string
+  /** Web URL for linking out */
+  app_url?: string
+}
+
+/**
+ * Get the primary card table (kanban board) for a project (from the dock).
+ * Note: a project can host additional card tables beyond the dock entry;
+ * use getProjectCardTables to enumerate them all.
  */
 export function getCardTableFromProject(project: BasecampProject): BasecampDockItem | undefined {
   return project.dock.find(item => item.name === 'kanban_board' && item.enabled)
@@ -617,29 +631,59 @@ export async function getCardTable(
   const { data } = await swFetch(cardTableUrl, {
     headers: createHeaders(accessToken),
   })
-  
+
   return data as BasecampCardTable
 }
 
 /**
- * Get card table columns for a project
+ * List every card table in a project. Iterates every enabled `kanban_board`
+ * entry in the project dock - a project can host more than one card table
+ * (e.g. a primary board plus a user-added board like "Internal QA"), and
+ * each appears as its own dock item. Kanban::Board is not a supported
+ * Recordings type, so the dock is the only reliable enumeration surface.
+ */
+export async function getProjectCardTables(
+  accessToken: string,
+  accountId: number,
+  projectId: number
+): Promise<BasecampCardTableRef[]> {
+  const project = await getProject(accessToken, accountId, projectId)
+
+  return project.dock
+    .filter(item => item.name === 'kanban_board' && item.enabled)
+    .map(item => ({
+      id: item.id,
+      title: item.title,
+      url: item.url,
+      app_url: item.app_url,
+    }))
+}
+
+/**
+ * Get card table columns for a project.
+ *
+ * Behavior:
+ * - If cardTableUrl is provided, fetch columns for that specific card table.
+ * - Otherwise, fall back to the project's dock card table (legacy behavior).
  */
 export async function getProjectCardColumns(
   accessToken: string,
   accountId: number,
-  projectId: number
+  projectId: number,
+  cardTableUrl?: string
 ): Promise<BasecampCardColumn[]> {
-  // First get the project to find the card table
-  const project = await getProject(accessToken, accountId, projectId)
-  const cardTableDock = getCardTableFromProject(project)
-  
-  if (!cardTableDock) {
-    return [] // No card table enabled for this project
+  let url = cardTableUrl
+
+  if (!url) {
+    const project = await getProject(accessToken, accountId, projectId)
+    const cardTableDock = getCardTableFromProject(project)
+    if (!cardTableDock) {
+      return []
+    }
+    url = cardTableDock.url
   }
-  
-  // Get the card table details (includes columns as 'lists')
-  const cardTable = await getCardTable(accessToken, cardTableDock.url)
-  
+
+  const cardTable = await getCardTable(accessToken, url)
   return cardTable.lists || []
 }
 

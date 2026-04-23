@@ -567,6 +567,48 @@ describe('storage', () => {
         })
       })
 
+      it('stores basecamp cardTableId alongside column when destinationType is card', async () => {
+        // A project may host multiple card tables, so the selected column's
+        // parent card table must be remembered to restore the exact pick.
+        setMockStorage({
+          integrationCredentials: {
+            basecamp: { clientId: 'id', clientSecret: 'secret', destinationType: 'card' },
+          },
+        })
+        await setLastUsedDestination(
+          'basecamp',
+          'project-123',
+          'account-123',
+          'column-789',
+          undefined,
+          'card-table-555'
+        )
+        const prefs = await getIntegrationPreferences()
+        expect(prefs.lastUsedDestinations?.basecamp).toEqual({
+          accountId: 'account-123',
+          projectId: 'project-123',
+          columnId: 'column-789',
+          cardTableId: 'card-table-555',
+        })
+      })
+
+      it('ignores cardTableId when destinationType is todo (todo lists have no card table)', async () => {
+        await setLastUsedDestination(
+          'basecamp',
+          'project-123',
+          'account-123',
+          'todolist-456',
+          undefined,
+          'card-table-555'
+        )
+        const prefs = await getIntegrationPreferences()
+        expect(prefs.lastUsedDestinations?.basecamp).toEqual({
+          accountId: 'account-123',
+          projectId: 'project-123',
+          todolistId: 'todolist-456',
+        })
+      })
+
       it('initializes lastUsedDestinations if not present', async () => {
         await setLastUsedDestination('fizzy', 'board-1', 'account-1')
         const prefs = await getIntegrationPreferences()
@@ -964,6 +1006,41 @@ describe('storage', () => {
           accountId: 'url-account-789',
           projectId: 'url-project-789',
           columnId: 'url-column-abc',
+        })
+      })
+
+      it('round-trips per-URL basecamp cardTableId alongside the column', async () => {
+        setMockStorage({
+          integrationCredentials: {
+            basecamp: { clientId: 'id', clientSecret: 'secret', destinationType: 'card' },
+          },
+        })
+        await setLastUsedDestination(
+          'basecamp',
+          'url-project-789',
+          'url-account-789',
+          'url-column-abc',
+          'https://kanban.example.com/board',
+          'url-card-table-123'
+        )
+
+        const prefs = await getIntegrationPreferences()
+        expect(prefs.urlDestinations?.['https://kanban.example.com']?.basecamp).toEqual({
+          accountId: 'url-account-789',
+          projectId: 'url-project-789',
+          columnId: 'url-column-abc',
+          cardTableId: 'url-card-table-123',
+        })
+
+        const restored = await getLastUsedDestination(
+          'basecamp',
+          'https://kanban.example.com/board'
+        )
+        expect(restored).toEqual({
+          destinationId: 'url-project-789',
+          accountId: 'url-account-789',
+          subDestinationId: 'url-column-abc',
+          cardTableId: 'url-card-table-123',
         })
       })
 
