@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   getIntegration,
   IntegrationError,
@@ -8,6 +8,7 @@ import {
   type SubDestination,
   type BasecampDestinationType,
 } from '../lib/integrations'
+import type { BasecampCardTableRef } from '../lib/basecamp-api'
 import { BasecampSessionExpired } from '../components/BasecampSessionExpired'
 import {
   getIntegrationCredentials,
@@ -56,6 +57,30 @@ export function DestinationSelector({
   const [hasCardColumns, setHasCardColumns] = useState(false)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
 
+  // For Basecamp card mode: list of card tables in the selected project
+  // (projects can host multiple, e.g. a primary board + an Internal QA board)
+  const [cardTables, setCardTables] = useState<BasecampCardTableRef[]>([])
+  const [selectedCardTable, setSelectedCardTable] = useState<BasecampCardTableRef | null>(null)
+  const [loadingCardTables, setLoadingCardTables] = useState(false)
+
+  // Auto-incrementing id identifying the currently active destination fetch cycle.
+  // Each user action (project change, destination-type toggle, card-table
+  // change, integration change) bumps this ref and kicks off a cascade of
+  // async data fetches (projects → availability → card tables → columns).
+  // Every async loader captures its own id at start and bails if the active
+  // id has moved on, so stale responses from a superseded cycle can't
+  // overwrite newer state.
+  const activeDestinationFetchIdRef = useRef(0)
+
+  // Two helpers instead of one combined helper: a combined version would
+  // bump the counter AND return a boolean checker in the same call, which
+  // hides the mutation behind an innocent-looking name. Splitting them
+  // means the bump only happens when you call beginDestinationFetchGeneration -
+  // callers reading isDestinationFetchCurrent can trust nothing is changing.
+  const beginDestinationFetchGeneration = () => ++activeDestinationFetchIdRef.current
+  const isDestinationFetchCurrent = (id: number) =>
+    id === activeDestinationFetchIdRef.current
+
   // Load destinations when integration changes
   useEffect(() => {
     if (integrationType) {
@@ -94,7 +119,8 @@ export function DestinationSelector({
 
   const loadDestinations = async () => {
     if (!integrationType) return
-    
+
+    const destinationFetchId = beginDestinationFetchGeneration()
     setLoading(true)
     setError(null)
     setErrorStatus(null)
@@ -103,6 +129,8 @@ export function DestinationSelector({
     setSelectedDestination(null)
     setSubDestinations([])
     setSelectedSubDestination(null)
+    setCardTables([])
+    setSelectedCardTable(null)
 
     try {
       const integration = getIntegration(integrationType)
@@ -113,15 +141,18 @@ export function DestinationSelector({
       // Get Basecamp destination type if applicable
       if (integrationType === 'basecamp') {
         const creds = await getIntegrationCredentials()
+        if (!isDestinationFetchCurrent(destinationFetchId)) return
         setBasecampDestinationType(creds.basecamp?.destinationType || 'todo')
       }
 
       setRequiresSubDestination(integration.requiresSubDestination())
       const dests = await integration.getDestinations()
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       setDestinations(dests)
 
       // Try to restore last used destination for this URL
       const lastUsed = await getLastUsedDestination(integrationType, currentUrl)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (lastUsed) {
         const lastDest = dests.find(d => d.id === lastUsed.destinationId)
         if (lastDest) {
@@ -135,6 +166,7 @@ export function DestinationSelector({
         setSelectedDestination(dests[0])
       }
     } catch (err) {
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (
         err instanceof IntegrationError &&
         err.integration === 'basecamp' &&
@@ -146,7 +178,9 @@ export function DestinationSelector({
         setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
       }
     } finally {
-      setLoading(false)
+      if (isDestinationFetchCurrent(destinationFetchId)) {
+        setLoading(false)
+      }
     }
   }
 
@@ -156,17 +190,24 @@ export function DestinationSelector({
   // the UI can render as a reconnect banner - rather than the old behavior
   // of swallowing every failure as "no destinations available".
   const checkBasecampAvailability = async (projectId: string) => {
+    // Child loader: inherits the generation its caller (the project-change
+    // handler or loadDestinations) already started. It observes rather than
+    // begins so the caller's `finally` guard still runs.
+    const destinationFetchId = activeDestinationFetchIdRef.current
     setCheckingAvailability(true)
     setHasTodoLists(false)
     setHasCardColumns(false)
     setSubDestinations([])
     setSelectedSubDestination(null)
+    setCardTables([])
+    setSelectedCardTable(null)
     setError(null)
     setErrorStatus(null)
 
     try {
       const { hasTodoLists: hasTodos, hasCardColumns: hasCards } =
         await basecampIntegration.getProjectAvailability(projectId)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
 
       setHasTodoLists(hasTodos)
       setHasCardColumns(hasCards)
@@ -176,21 +217,27 @@ export function DestinationSelector({
 
       // If current type is not available, switch to the other
       const creds = await getIntegrationCredentials()
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (effectiveType === 'todo' && !hasTodos && hasCards && creds.basecamp) {
         effectiveType = 'card'
         setBasecampDestinationType('card')
         await setBasecampCredentials({ ...creds.basecamp, destinationType: 'card' })
+        if (!isDestinationFetchCurrent(destinationFetchId)) return
       } else if (effectiveType === 'card' && !hasCards && hasTodos && creds.basecamp) {
         effectiveType = 'todo'
         setBasecampDestinationType('todo')
         await setBasecampCredentials({ ...creds.basecamp, destinationType: 'todo' })
+        if (!isDestinationFetchCurrent(destinationFetchId)) return
       }
 
       // Now load the appropriate sub-destinations
-      if ((effectiveType === 'todo' && hasTodos) || (effectiveType === 'card' && hasCards)) {
+      if (effectiveType === 'card' && hasCards) {
+        loadCardTables(projectId)
+      } else if (effectiveType === 'todo' && hasTodos) {
         loadSubDestinations(projectId)
       }
     } catch (err) {
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (
         err instanceof IntegrationError &&
         err.integration === 'basecamp' &&
@@ -202,13 +249,74 @@ export function DestinationSelector({
         setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
       }
     } finally {
-      setCheckingAvailability(false)
+      if (isDestinationFetchCurrent(destinationFetchId)) {
+        setCheckingAvailability(false)
+      }
     }
   }
 
-  const loadSubDestinations = async (destinationId: string) => {
+  // Basecamp card mode: list the project's card tables (a project can host
+  // more than one, e.g. a primary board plus an Internal QA board). Auto-
+  // selects when there's only one, or when the user's last pick still exists.
+  const loadCardTables = async (projectId: string) => {
+    // Child loader - see checkBasecampAvailability comment; inherits the
+    // caller's generation instead of starting a new one.
+    const destinationFetchId = activeDestinationFetchIdRef.current
+    setLoadingCardTables(true)
+    setCardTables([])
+    setSelectedCardTable(null)
+    setSubDestinations([])
+    setSelectedSubDestination(null)
+
+    try {
+      const tables = await basecampIntegration.getProjectCardTables(projectId)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
+      setCardTables(tables)
+
+      if (tables.length === 0) {
+        // No card tables anywhere in this project - treat as no cards available
+        setHasCardColumns(false)
+        return
+      }
+
+      const lastUsed = await getLastUsedDestination('basecamp', currentUrl)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
+      const restored = lastUsed?.cardTableId
+        ? tables.find(t => t.id.toString() === lastUsed.cardTableId)
+        : undefined
+
+      const pick = restored || (tables.length === 1 ? tables[0] : null)
+      if (pick) {
+        setSelectedCardTable(pick)
+        loadSubDestinations(projectId, pick)
+      }
+    } catch (err) {
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
+      if (
+        err instanceof IntegrationError &&
+        err.integration === 'basecamp' &&
+        (err.code === 'session_expired' || err.code === 'invalid_client')
+      ) {
+        setBasecampAuthError(err.code)
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load card tables')
+        setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
+      }
+    } finally {
+      if (isDestinationFetchCurrent(destinationFetchId)) {
+        setLoadingCardTables(false)
+      }
+    }
+  }
+
+  const loadSubDestinations = async (
+    destinationId: string,
+    cardTable?: BasecampCardTableRef
+  ) => {
     if (!integrationType) return
 
+    // Child loader - inherits the caller's generation.
+    const destinationFetchId = activeDestinationFetchIdRef.current
     setLoadingSub(true)
     setSubDestinations([])
     setSelectedSubDestination(null)
@@ -217,24 +325,34 @@ export function DestinationSelector({
       const integration = getIntegration(integrationType)
       if (!integration) return
 
-      const subs = await integration.getSubDestinations(destinationId)
-      setSubDestinations(subs)
+      // Basecamp card mode targets a specific card table's columns; other
+      // integrations and todo mode ignore the extra argument.
+      const fetchedSubDestinations =
+        integrationType === 'basecamp' && cardTable
+          ? await basecampIntegration.getSubDestinations(destinationId, cardTable.url)
+          : await integration.getSubDestinations(destinationId)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
+      setSubDestinations(fetchedSubDestinations)
 
       // Try to restore last used sub-destination for this URL
       const lastUsed = await getLastUsedDestination(integrationType, currentUrl)
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (lastUsed?.subDestinationId) {
-        const lastSub = subs.find(s => s.id === lastUsed.subDestinationId)
-        if (lastSub) {
-          setSelectedSubDestination(lastSub)
+        const lastSubDestination = fetchedSubDestinations.find(
+          subDestination => subDestination.id === lastUsed.subDestinationId
+        )
+        if (lastSubDestination) {
+          setSelectedSubDestination(lastSubDestination)
           return
         }
       }
 
       // Auto-select first if only one
-      if (subs.length === 1) {
-        setSelectedSubDestination(subs[0])
+      if (fetchedSubDestinations.length === 1) {
+        setSelectedSubDestination(fetchedSubDestinations[0])
       }
     } catch (err) {
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
       // Auth failures here (e.g. refresh token revoked between the initial
       // project load and the sub-destination load) must surface as the
       // reconnect banner, otherwise the required sub-destination select
@@ -250,14 +368,19 @@ export function DestinationSelector({
         setErrorStatus(err instanceof IntegrationError ? err.status ?? null : null)
       }
     } finally {
-      setLoadingSub(false)
+      if (isDestinationFetchCurrent(destinationFetchId)) {
+        setLoadingSub(false)
+      }
     }
   }
 
   const handleDestinationChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    // A new project supersedes any in-flight availability/card-table/column
+    // load, so stale responses from the previous project don't overwrite state.
+    beginDestinationFetchGeneration()
     const dest = destinations.find(d => d.id === e.target.value)
     setSelectedDestination(dest || null)
-    
+
     // Save as last used for this URL (without sub-destination for now)
     if (dest && integrationType) {
       setLastUsedDestination(integrationType, dest.id, dest.accountId, undefined, currentUrl)
@@ -265,40 +388,88 @@ export function DestinationSelector({
   }
 
   const handleSubDestinationChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const sub = subDestinations.find(s => s.id === e.target.value)
-    setSelectedSubDestination(sub || null)
-    
-    // Save as last used for this URL (with sub-destination)
-    if (sub && selectedDestination && integrationType) {
+    const subDestination = subDestinations.find(candidate => candidate.id === e.target.value)
+    setSelectedSubDestination(subDestination || null)
+
+    // Save as last used for this URL (with sub-destination). For Basecamp card
+    // mode, also remember which card table the column came from so we can
+    // restore the exact pick next time.
+    if (subDestination && selectedDestination && integrationType) {
+      const cardTableId =
+        integrationType === 'basecamp' &&
+        basecampDestinationType === 'card' &&
+        selectedCardTable
+          ? selectedCardTable.id.toString()
+          : undefined
+
       setLastUsedDestination(
-        integrationType, 
-        selectedDestination.id, 
-        selectedDestination.accountId, 
-        sub.id,
-        currentUrl
+        integrationType,
+        selectedDestination.id,
+        selectedDestination.accountId,
+        subDestination.id,
+        currentUrl,
+        cardTableId
       )
     }
   }
 
+  const handleCardTableChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    // A new card table supersedes any in-flight column load.
+    beginDestinationFetchGeneration()
+    const table = cardTables.find(t => t.id.toString() === e.target.value) || null
+    setSelectedCardTable(table)
+    setSubDestinations([])
+    setSelectedSubDestination(null)
+
+    if (table && selectedDestination && integrationType) {
+      // Persist the card-table pick immediately. Clears the previously-saved
+      // column since it belonged to a different table - the user will pick a
+      // new one from this table's columns next.
+      setLastUsedDestination(
+        integrationType,
+        selectedDestination.id,
+        selectedDestination.accountId,
+        undefined,
+        currentUrl,
+        table.id.toString()
+      )
+
+      loadSubDestinations(selectedDestination.id, table)
+    }
+  }
+
   const handleDestinationTypeChange = async (newType: BasecampDestinationType) => {
-    // Save the preference
+    // Switching mode supersedes any in-flight load from the previous mode.
+    const destinationFetchId = beginDestinationFetchGeneration()
+
+    // Save the preference. Re-check destinationFetchId before writing to storage so a
+    // rapid double-toggle (card → todo → card) can't let an earlier handler
+    // flip the persisted destinationType back underneath a later one.
     const creds = await getIntegrationCredentials()
+    if (!isDestinationFetchCurrent(destinationFetchId)) return
     if (creds.basecamp) {
       await setBasecampCredentials({
         ...creds.basecamp,
         destinationType: newType,
       })
+      if (!isDestinationFetchCurrent(destinationFetchId)) return
     }
-    
+
     setBasecampDestinationType(newType)
-    
-    // Clear sub-destination and reload when type changes
+
+    // Clear sub-destination and card-table state when type changes
     setSubDestinations([])
     setSelectedSubDestination(null)
-    
+    setCardTables([])
+    setSelectedCardTable(null)
+
     // Reload sub-destinations with new type
     if (selectedDestination) {
-      loadSubDestinations(selectedDestination.id)
+      if (newType === 'card') {
+        loadCardTables(selectedDestination.id)
+      } else {
+        loadSubDestinations(selectedDestination.id)
+      }
     }
   }
 
@@ -436,29 +607,67 @@ export function DestinationSelector({
         </div>
       )}
 
+      {/* Basecamp card mode: Card Table picker. Shown only when the project
+          hosts more than one card table; a sole card table is auto-selected. */}
+      {integrationType === 'basecamp' &&
+        basecampDestinationType === 'card' &&
+        selectedDestination &&
+        !checkingAvailability &&
+        hasCardColumns &&
+        (loadingCardTables || cardTables.length > 1) && (
+          <div className="form-group">
+            <label>Card Table *</label>
+            {loadingCardTables ? (
+              <div className="loading-inline">
+                <div className="spinner-small" />
+                <span>Loading...</span>
+              </div>
+            ) : (
+              <select
+                value={selectedCardTable?.id.toString() || ''}
+                onChange={handleCardTableChange}
+                disabled={disabled}
+              >
+                <option value="">Select card table...</option>
+                {cardTables.map(table => (
+                  <option key={table.id} value={table.id.toString()}>
+                    {table.title}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
       {requiresSubDestination && selectedDestination && !checkingAvailability && (hasTodoLists || hasCardColumns || integrationType !== 'basecamp') && (
-        <div className="form-group">
-          <label>{subDestinationLabel} *</label>
-          {loadingSub ? (
-            <div className="loading-inline">
-              <div className="spinner-small" />
-              <span>Loading...</span>
-            </div>
-          ) : (
-            <select
-              value={selectedSubDestination?.id || ''}
-              onChange={handleSubDestinationChange}
-              disabled={disabled || subDestinations.length === 0}
-            >
-              <option value="">Select {subDestinationLabel.toLowerCase()}...</option>
-              {subDestinations.map((sub) => (
-                <option key={sub.id} value={sub.id}>
-                  {sub.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        // In card mode, gate the Column dropdown on having a card table chosen
+        // so users never see columns without knowing which board they belong to.
+        (integrationType !== 'basecamp' ||
+          basecampDestinationType !== 'card' ||
+          selectedCardTable) && (
+          <div className="form-group">
+            <label>{subDestinationLabel} *</label>
+            {loadingSub ? (
+              <div className="loading-inline">
+                <div className="spinner-small" />
+                <span>Loading...</span>
+              </div>
+            ) : (
+              <select
+                value={selectedSubDestination?.id || ''}
+                onChange={handleSubDestinationChange}
+                disabled={disabled || subDestinations.length === 0}
+              >
+                <option value="">Select {subDestinationLabel.toLowerCase()}...</option>
+                {subDestinations.map((subDestination) => (
+                  <option key={subDestination.id} value={subDestination.id}>
+                    {subDestination.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )
       )}
     </div>
   )

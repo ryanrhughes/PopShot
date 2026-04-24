@@ -170,6 +170,144 @@ describe('BasecampIntegration auth error handling', () => {
     })
   })
 
+  describe('getProjectCardTables', () => {
+    it('returns every enabled kanban_board dock item (a project can host multiple card tables)', async () => {
+      setMessageHandler((message) => {
+        const { url } = message as { url: string }
+        if (url.includes('/projects/42.json')) {
+          return {
+            success: true,
+            data: {
+              id: 42,
+              name: 'Multi-board project',
+              status: 'active',
+              dock: [
+                { id: 1, title: 'Message Board', name: 'message_board', enabled: true, url: 'x', app_url: 'x' },
+                { id: 100, title: 'Main Board', name: 'kanban_board', enabled: true, url: 'https://example/card_tables/100.json', app_url: 'https://example/card_tables/100' },
+                { id: 200, title: 'Internal QA', name: 'kanban_board', enabled: true, url: 'https://example/card_tables/200.json', app_url: 'https://example/card_tables/200' },
+              ],
+              app_url: 'https://example/42',
+            },
+          }
+        }
+        return { success: true, data: [] }
+      })
+
+      const integration = new BasecampIntegration()
+      const tables = await integration.getProjectCardTables('42')
+
+      expect(tables).toEqual([
+        { id: 100, title: 'Main Board', url: 'https://example/card_tables/100.json', app_url: 'https://example/card_tables/100' },
+        { id: 200, title: 'Internal QA', url: 'https://example/card_tables/200.json', app_url: 'https://example/card_tables/200' },
+      ])
+    })
+
+    it('skips disabled kanban_board dock items', async () => {
+      setMessageHandler(() => ({
+        success: true,
+        data: {
+          id: 42,
+          name: 'P',
+          status: 'active',
+          dock: [
+            { id: 100, title: 'Archived Board', name: 'kanban_board', enabled: false, url: 'x', app_url: 'x' },
+            { id: 200, title: 'Live Board', name: 'kanban_board', enabled: true, url: 'https://example/card_tables/200.json', app_url: 'https://example/card_tables/200' },
+          ],
+          app_url: 'https://example/42',
+        },
+      }))
+
+      const integration = new BasecampIntegration()
+      const tables = await integration.getProjectCardTables('42')
+
+      expect(tables).toHaveLength(1)
+      expect(tables[0].id).toBe(200)
+    })
+
+    it('returns an empty array when the project has no kanban_board dock items', async () => {
+      setMessageHandler(() => ({
+        success: true,
+        data: {
+          id: 42,
+          name: 'P',
+          status: 'active',
+          dock: [
+            { id: 1, title: 'To-dos', name: 'todoset', enabled: true, url: 'x', app_url: 'x' },
+          ],
+          app_url: 'https://example/42',
+        },
+      }))
+
+      const integration = new BasecampIntegration()
+      const tables = await integration.getProjectCardTables('42')
+
+      expect(tables).toEqual([])
+    })
+
+    it('converts a 401 into the canonical session_expired IntegrationError', async () => {
+      setMessageHandler(() => ({
+        success: false,
+        status: 401,
+        error: 'OAuth token expired',
+      }))
+
+      const integration = new BasecampIntegration()
+
+      await expect(integration.getProjectCardTables('42')).rejects.toMatchObject({
+        message: CANONICAL_EXPIRED_MESSAGE,
+        status: 401,
+        integration: 'basecamp',
+        code: 'session_expired',
+      })
+    })
+  })
+
+  describe('getSubDestinations with explicit cardTableUrl (card mode)', () => {
+    it('fetches columns from the provided card table URL, not the dock primary', async () => {
+      // Simulate the card-mode flow where the UI passes a specific card
+      // table URL so columns come from the user's chosen board (e.g. an
+      // Internal QA board), not the project's built-in dock entry.
+      setMockStorage({
+        integrationCredentials: {
+          basecamp: {
+            ...validCredentials.integrationCredentials.basecamp,
+            destinationType: 'card',
+          },
+        },
+      })
+
+      const requested: string[] = []
+      setMessageHandler((message) => {
+        const { url } = message as { url: string }
+        requested.push(url)
+        if (url.includes('/card_tables/200.json')) {
+          return {
+            success: true,
+            data: {
+              id: 200,
+              title: 'Internal QA',
+              lists: [
+                { id: 9001, title: 'Backlog', type: 'Kanban::Column' },
+                { id: 9002, title: 'In Review', type: 'Kanban::Column' },
+              ],
+            },
+          }
+        }
+        return { success: true, data: {} }
+      })
+
+      const integration = new BasecampIntegration()
+      const subs = await integration.getSubDestinations(
+        '42',
+        'https://example/card_tables/200.json'
+      )
+
+      expect(subs.map(s => s.name)).toEqual(['Backlog', 'In Review'])
+      // The project lookup should be skipped when a card table URL is provided.
+      expect(requested).toEqual(['https://example/card_tables/200.json'])
+    })
+  })
+
   describe('getProjectAvailability', () => {
     it('converts a 401 into the canonical session_expired IntegrationError so the UI can show the reconnect banner instead of a false "no destinations available"', async () => {
       setMessageHandler(() => ({

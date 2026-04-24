@@ -20,6 +20,7 @@ import {
   getProjects,
   getProjectTodoLists,
   getProjectCardColumns,
+  getProjectCardTables,
   uploadAttachment,
   createTodo,
   createCard,
@@ -29,6 +30,7 @@ import {
   type BasecampProject,
   type BasecampTodoList,
   type BasecampCardColumn,
+  type BasecampCardTableRef,
 } from '../basecamp-api'
 import { getIntegrationCredentials, setBasecampCredentials } from '../storage'
 
@@ -106,22 +108,48 @@ export class BasecampIntegration implements Integration {
 
   /**
    * Get to-do lists or card columns within a project as sub-destinations
-   * (depending on destinationType setting)
+   * (depending on destinationType setting).
+   *
+   * For card mode: returns columns from the project's primary (dock) card table.
+   * Pass a specific cardTableUrl to target a non-primary card table.
    */
-  async getSubDestinations(projectId: string): Promise<SubDestination[]> {
+  async getSubDestinations(
+    projectId: string,
+    cardTableUrl?: string
+  ): Promise<SubDestination[]> {
     return this.withAuthErrorHandling(async () => {
       const { accessToken, accountId, destinationType } = await this.getCredentials()
       const projectIdNum = parseInt(projectId, 10)
 
       if (destinationType === 'card') {
         // Get card table columns
-        const columns = await getProjectCardColumns(accessToken, accountId, projectIdNum)
+        const columns = await getProjectCardColumns(
+          accessToken,
+          accountId,
+          projectIdNum,
+          cardTableUrl
+        )
         return columns.map(col => this.cardColumnToSubDestination(col, projectId))
       } else {
         // Default to to-do lists
         const todoLists = await getProjectTodoLists(accessToken, accountId, projectIdNum)
         return todoLists.map(list => this.todoListToSubDestination(list, projectId))
       }
+    })
+  }
+
+  /**
+   * List every card table in a project. Used by the UI to offer a Card Table
+   * picker when a project hosts more than one (e.g. a primary board plus an
+   * Internal QA board). Enumerates every enabled `kanban_board` entry in the
+   * project dock - Kanban::Board is not a supported Recordings type, so the
+   * dock is the only reliable listing surface.
+   */
+  async getProjectCardTables(projectId: string): Promise<BasecampCardTableRef[]> {
+    return this.withAuthErrorHandling(async () => {
+      const { accessToken, accountId } = await this.getCredentials()
+      const projectIdNum = parseInt(projectId, 10)
+      return getProjectCardTables(accessToken, accountId, projectIdNum)
     })
   }
 
