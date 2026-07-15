@@ -289,6 +289,45 @@ export class BasecampApiError extends Error {
   }
 }
 
+// ============ Pagination ============
+
+/**
+ * Extract the rel="next" URL from a Link response header, if present.
+ * Basecamp signals more pages with: Link: <https://…?page=2>; rel="next"
+ */
+function parseNextLink(headers?: Record<string, string>): string | undefined {
+  const link = headers?.['link'] ?? headers?.['Link']
+  if (!link) return undefined
+  const match = link.match(/<([^>]+)>\s*;\s*rel="next"/)
+  return match ? match[1] : undefined
+}
+
+const MAX_PAGES = 50 // safety limit against a runaway Link chain
+
+/**
+ * Fetch all pages of a paginated Basecamp collection endpoint.
+ * Basecamp uses geared pagination (page sizes of 15/30/50/100), so the
+ * rel="next" Link header must be followed rather than constructing ?page=N.
+ */
+async function fetchAllPages<T>(
+  url: string,
+  headers: Record<string, string>
+): Promise<T[]> {
+  const results: T[] = []
+  let nextUrl: string | undefined = url
+  let pages = 0
+
+  while (nextUrl && pages < MAX_PAGES) {
+    const { data, headers: responseHeaders } = await swFetch(nextUrl, { headers })
+    if (!Array.isArray(data)) break
+    results.push(...(data as T[]))
+    nextUrl = parseNextLink(responseHeaders)
+    pages++
+  }
+
+  return results
+}
+
 // ============ Auth Helpers ============
 
 /**
@@ -394,11 +433,10 @@ export async function getProjects(
   accessToken: string,
   accountId: number
 ): Promise<BasecampProject[]> {
-  const { data } = await swFetch(`${BASECAMP_API_BASE}/${accountId}/projects.json`, {
-    headers: createHeaders(accessToken),
-  })
-  
-  return data as BasecampProject[]
+  return fetchAllPages<BasecampProject>(
+    `${BASECAMP_API_BASE}/${accountId}/projects.json`,
+    createHeaders(accessToken)
+  )
 }
 
 /**
@@ -446,11 +484,7 @@ export async function getTodoLists(
   accessToken: string,
   todoListsUrl: string
 ): Promise<BasecampTodoList[]> {
-  const { data } = await swFetch(todoListsUrl, {
-    headers: createHeaders(accessToken),
-  })
-  
-  return data as BasecampTodoList[]
+  return fetchAllPages<BasecampTodoList>(todoListsUrl, createHeaders(accessToken))
 }
 
 /**
