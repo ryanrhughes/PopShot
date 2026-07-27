@@ -33,6 +33,7 @@ import {
   type BasecampCardTableRef,
 } from '../basecamp-api'
 import { getIntegrationCredentials, setBasecampCredentials } from '../storage'
+import { resolveOAuthApp } from '../basecamp-oauth-app'
 
 /**
  * Canonical error messages for the two OAuth recovery paths.
@@ -344,7 +345,8 @@ ${this.getImageEmbedHtml(upload)}
 
     // Check if token is expired or about to expire (within 5 minutes)
     let accessToken = bc.accessToken
-    if (bc.expiresAt && bc.refreshToken && bc.clientId && bc.clientSecret) {
+    const { clientId, clientSecret } = resolveOAuthApp(bc)
+    if (bc.expiresAt && bc.refreshToken && clientId && clientSecret) {
       const expiresAt = new Date(bc.expiresAt)
       const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000)
       
@@ -356,8 +358,8 @@ ${this.getImageEmbedHtml(upload)}
         try {
           const tokenData = await refreshAccessToken(
             bc.refreshToken,
-            bc.clientId,
-            bc.clientSecret
+            clientId,
+            clientSecret
           )
 
           // Calculate new expiration time

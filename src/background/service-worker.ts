@@ -5,6 +5,7 @@
 
 import { parseApiErrorMessage } from './api-error'
 import { parseOAuthErrorCode, type OAuthErrorCode } from './oauth-error'
+import { resolveOAuthApp } from '../lib/basecamp-oauth-app'
 
 const FIZZY_API_BASE = 'https://app.fizzy.do'
 const BASECAMP_API_BASE = 'https://3.basecampapi.com'
@@ -101,7 +102,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   // Handle Basecamp OAuth start (full flow including launchWebAuthFlow)
   if (message.action === 'basecampOAuthStart') {
-    runSingleFlightOAuth(() => handleBasecampOAuthStart(message.clientId, message.redirectUri))
+    runSingleFlightOAuth(() => handleBasecampOAuthStart())
       .then((result) => {
         sendResponse({ success: true, accountName: result.accountName })
       })
@@ -552,15 +553,28 @@ function runSingleFlightOAuth(
   return inFlightOAuth
 }
 
-async function handleBasecampOAuthStart(clientId: string, redirectUri: string): Promise<{ accountName: string }> {
+async function handleBasecampOAuthStart(): Promise<{ accountName: string }> {
+  // Credentials ship with the extension (see basecamp-oauth-app.ts), so
+  // nothing here depends on the user having filled in a Settings form. A
+  // stored client id/secret still wins for anyone running their own app.
+  const { integrationCredentials } = await chrome.storage.local.get('integrationCredentials')
+  const { clientId, redirectUri } = resolveOAuthApp(integrationCredentials?.basecamp)
+
+  // A client id registered against a different redirect URI fails as an
+  // opaque "Authorization page could not be loaded" from chrome.identity, so
+  // log both: mismatches are otherwise near-impossible to diagnose.
+  console.log(
+    `[Basecamp] Authorizing with client ${clientId.slice(0, 8)}... redirect ${redirectUri}`
+  )
+
   // Generate state parameter for CSRF protection
   const state = generateOAuthState()
   pendingOAuthState = state
-  
+
   // Build the authorization URL with state parameter
   // Using response_type=code for standard OAuth 2.0 Authorization Code flow
   const params = new URLSearchParams({
-    type: 'web_server',
+    response_type: 'code',
     client_id: clientId,
     redirect_uri: redirectUri,
     state: state,
@@ -610,38 +624,20 @@ async function handleBasecampOAuthStart(clientId: string, redirectUri: string): 
 }
 
 /**
- * Re-run the OAuth authorization flow using already-stored client credentials.
+ * Re-run the OAuth authorization flow.
  *
  * Used by the inline "Reconnect" affordance on UI surfaces that hit a 401.
- * Reads clientId + redirectUri from storage so callers don't need to plumb
- * them; otherwise identical to handleBasecampOAuthStart. If the client
- * credentials aren't configured at all (e.g. user never connected), rejects
- * so the UI can steer the user to Settings.
+ * Identical to handleBasecampOAuthStart now that credentials no longer come
+ * from the user, and kept as a distinct entry point so the message contract
+ * and its single-flight wrapper stay unchanged.
  */
 async function handleBasecampOAuthReconnect(): Promise<{ accountName: string }> {
-  const { integrationCredentials } = await chrome.storage.local.get('integrationCredentials')
-  const clientId = integrationCredentials?.basecamp?.clientId
-
-  if (!clientId) {
-    throw new Error(
-      'Basecamp is not configured. Open Settings to enter Client ID, Client Secret, and Redirect URI.'
-    )
-  }
-
-  // Users connected before redirectUri was persisted (or whoever used the
-  // chrome.identity default) won't have a stored redirectUri. Fall back to the
-  // runtime default rather than forcing them through Settings.
-  const redirectUri =
-    integrationCredentials?.basecamp?.redirectUri || chrome.identity.getRedirectURL()
-
-  return handleBasecampOAuthStart(clientId, redirectUri)
+  return handleBasecampOAuthStart()
 }
 
 async function handleBasecampOAuthExchange(code: string, redirectUri: string): Promise<{ accountName: string }> {
-  // Get stored client credentials
   const { integrationCredentials } = await chrome.storage.local.get('integrationCredentials')
-  const clientId = integrationCredentials?.basecamp?.clientId
-  const clientSecret = integrationCredentials?.basecamp?.clientSecret
+  const { clientId, clientSecret } = resolveOAuthApp(integrationCredentials?.basecamp)
 
   if (!clientId || !clientSecret) {
     throw new Error('Basecamp app credentials not configured')
@@ -695,13 +691,14 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
   // Calculate expiration time
   const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
 
-  // Save credentials. redirectUri is persisted so the inline reconnect flow
-  // (which doesn't go through the Options form) can rebuild the authorize URL
-  // without asking the user to re-enter it.
+  // Deliberately does not persist clientId/clientSecret/redirectUri: the
+  // built-in app is a build-time constant, and writing a copy to storage would
+  // shadow it forever via the override path in resolveOAuthApp - so a rotated
+  // or environment-switched secret would never take effect. Spreading the
+  // existing record preserves a genuine user-supplied override (and the
+  // credentials of anyone who connected before the built-in app existed).
   const credentials = {
-    clientId,
-    clientSecret,
-    redirectUri,
+    ...(integrationCredentials?.basecamp ?? {}),
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     expiresAt,

@@ -63,65 +63,68 @@ Right-click on the page and select **Inspect** to open DevTools.
 
 ### Basecamp Integration
 
-Basecamp uses OAuth 2.0, which requires registering an application.
+Basecamp OAuth credentials ship with the extension - contributors do **not**
+register their own app. Two apps are registered at launchpad.37signals.com, one
+per environment, because each extension ID gets its own redirect URI:
 
-#### Step 1: Register a Basecamp App
+| Environment | Extension ID | Redirect URI |
+|---|---|---|
+| Production | `hkojmgeacmocafnaiallhmkfjcimafok` (Chrome Web Store) | `https://hkojmgeacmocafnaiallhmkfjcimafok.chromiumapp.org/` |
+| Development | `njnjmoplkkjcfjiojcdkdllmfphefbdj` (pinned, see below) | `https://njnjmoplkkjcfjiojcdkdllmfphefbdj.chromiumapp.org/` |
 
-1. Go to [launchpad.37signals.com/integrations](https://launchpad.37signals.com/integrations)
-2. Sign in with your Basecamp account
-3. Click **Register your application**
-4. Fill in the details:
-   - **Name**: PopShot (Development) or similar
-   - **Company**: Your company/name
-   - **Website URL**: Your website or GitHub repo
-   - **Redirect URI**: See below
+The credentials live in `src/lib/basecamp-oauth-app.ts`. Launchpad has no PKCE
+and no public-client support, so the client secret has to ship in the bundle;
+37signals do the same in their own `basecamp-cli`, where the equivalent
+constants are commented "public client credentials for the native CLI app, not
+secrets". What actually scopes an authorization is the registered redirect URI,
+which nobody else can claim.
 
-#### Step 2: Configure Redirect URI
+#### Why the development ID is pinned
 
-The redirect URI format for Chrome extensions is:
+Without a `key` in the manifest, Chrome derives an unpacked extension's ID from
+its install path, so every machine and checkout would get a different ID and a
+different redirect URI. `manifest.config.ts` injects a fixed public key for
+non-production builds, giving every developer the same ID. Production omits it -
+the Web Store holds the signing key.
+
+#### Building for local development
+
+Use a **development** build. Vite's mode selects both the manifest key and the
+credentials, so they can never disagree:
+
+```bash
+npm run dev        # watch + HMR, keeps dist/ updated (preferred)
+npm run build:dev  # one-shot development build
 ```
-https://<extension-id>.chromiumapp.org/
+
+`npm run build` and `npm run release` are production-only. Loading a production
+build locally pairs production credentials with the development extension ID and
+authorization fails.
+
+#### Troubleshooting
+
+**"Authorization page could not be loaded"** - the client id and redirect URI
+disagree, almost always because `dist/` holds a production build. Check with:
+
+```bash
+node -e "console.log(!!require('./dist/manifest.json').key)"   # true = dev build
 ```
 
-**Important**: Your local extension ID is different from the published extension ID.
+The service worker logs the pairing on every connect attempt:
 
-- **Published extension ID**: `hkojmgeacmocafnaiallhmkfjcimafok`
-- **Local extension ID**: Found at `chrome://extensions/` after loading the unpacked extension
-
-For local development, you need to register your **local** extension's redirect URI:
 ```
-https://<your-local-extension-id>.chromiumapp.org/
+[Basecamp] Authorizing with client e81e2767... redirect https://njnjmoplkkjcfjiojcdkdllmfphefbdj.chromiumapp.org/
 ```
 
-You can register **multiple redirect URIs** in your Basecamp app if you want to support both local and published versions.
+**Toggle greyed out in `chrome://extensions`** - Chrome disabled the extension
+after a failed reload (Vite empties `dist/` on each build). Remove the extension
+and re-add it with Load unpacked; the pinned key keeps the ID stable.
 
-#### Step 3: Get Your Credentials
+#### Using your own Basecamp app
 
-After registration, Basecamp will show you:
-- **Client ID**: Public identifier (safe to share)
-- **Client Secret**: Private key (keep secure, shown only once)
-
-Save these somewhere secure - you'll need them for testing.
-
-#### Step 4: Configure PopShot for Local Development
-
-1. Open PopShot Options page
-2. Go to the Basecamp section
-3. Enter your **Client Secret**
-4. Expand **Advanced Settings**
-5. Update the **Redirect URI** to match your local extension:
-   ```
-   https://<your-local-extension-id>.chromiumapp.org/
-   ```
-6. Optionally update the **Client ID** if you're using your own Basecamp app
-7. Click **Connect to Basecamp**
-
-### Switching Between Local and Production
-
-When switching between local development and testing the published extension:
-
-1. Update the **Redirect URI** in Advanced Settings to match the extension you're using
-2. Make sure that redirect URI is registered in your Basecamp app at launchpad.37signals.com
+A `clientId` + `clientSecret` stored in `integrationCredentials.basecamp`
+overrides the built-in app (see `resolveOAuthApp`). Connections made before the
+built-in app existed keep working this way. There is no UI for setting it.
 
 ## Project Structure
 

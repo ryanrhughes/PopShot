@@ -3,7 +3,6 @@ import {
   getIntegrationCredentials, 
   setFizzyCredentials, 
   clearFizzyCredentials,
-  setBasecampCredentials,
   clearBasecampCredentials,
   type IntegrationCredentials,
 } from '../lib/storage'
@@ -233,9 +232,6 @@ function FizzySettings({ credentials, onUpdate }: FizzySettingsProps) {
 
 interface BasecampSettingsProps {
   credentials?: {
-    clientId?: string
-    clientSecret?: string
-    redirectUri?: string
     accessToken?: string
     accountName?: string
     expiresAt?: string
@@ -244,9 +240,6 @@ interface BasecampSettingsProps {
 }
 
 function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
-  const [clientId, setClientId] = useState(credentials?.clientId || '')
-  const [clientSecret, setClientSecret] = useState(credentials?.clientSecret || '')
-  const [redirectUri, setRedirectUri] = useState(credentials?.redirectUri || '')
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -259,32 +252,9 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
   const isExpired = credentials?.expiresAt && new Date(credentials.expiresAt) <= new Date()
   const showReconnect = isConnected && (isExpired || testFailed)
 
-  // Update local state when credentials change
-  useEffect(() => {
-    setClientId(credentials?.clientId || '')
-    setClientSecret(credentials?.clientSecret || '')
-    setRedirectUri(credentials?.redirectUri || '')
-  }, [credentials?.clientId, credentials?.clientSecret, credentials?.redirectUri])
-
-  // Start OAuth flow
+  // Start OAuth flow. Credentials ship with the extension, so there is nothing
+  // to collect or save first - this is a single click.
   const handleConnect = async () => {
-    if (!clientId.trim() || !clientSecret.trim() || !redirectUri.trim()) {
-      setMessage({ type: 'error', text: 'Please enter Client ID, Client Secret, and Redirect URI' })
-      return
-    }
-
-    // Save credentials first
-    try {
-      await setBasecampCredentials({
-        clientId: clientId.trim(),
-        clientSecret: clientSecret.trim(),
-        redirectUri: redirectUri.trim(),
-      })
-    } catch {
-      setMessage({ type: 'error', text: 'Failed to save credentials' })
-      return
-    }
-
     setConnecting(true)
     setMessage(null)
 
@@ -294,8 +264,6 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
       console.log('[Options] Sending basecampOAuthStart message...')
       const response = await chrome.runtime.sendMessage({
         action: 'basecampOAuthStart',
-        clientId: clientId.trim(),
-        redirectUri: redirectUri.trim(),
       })
       console.log('[Options] Got response:', response)
 
@@ -355,9 +323,7 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
 
   const handleDisconnect = async () => {
     await clearBasecampCredentials()
-    setClientId('')
-    setClientSecret('')
-    setRedirectUri('')
+    setTestFailed(false)
     setMessage({ type: 'success', text: 'Basecamp disconnected' })
     onUpdate()
   }
@@ -423,54 +389,16 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
         </div>
       ) : !connecting && (
         <>
-          <div className="form-group">
-            <label htmlFor="basecamp-client-id">Client ID</label>
-            <input
-              id="basecamp-client-id"
-              type="text"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              placeholder="Enter your Basecamp Client ID"
-              disabled={connecting}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="basecamp-client-secret">Client Secret</label>
-            <input
-              id="basecamp-client-secret"
-              type="password"
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-              placeholder="Enter your Basecamp Client Secret"
-              disabled={connecting}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="basecamp-redirect-uri">Redirect URI</label>
-            <input
-              id="basecamp-redirect-uri"
-              type="text"
-              value={redirectUri}
-              onChange={(e) => setRedirectUri(e.target.value)}
-              placeholder="Enter your Redirect URI"
-              disabled={connecting}
-            />
-          </div>
-
           <p className="field-hint">
-            Get these values from your{' '}
-            <a href="https://launchpad.37signals.com/integrations" target="_blank" rel="noopener noreferrer">
-              Basecamp integration settings
-            </a>
+            Sign in with your Basecamp account to let PopShot create to-dos and
+            cards on your behalf.
           </p>
 
           <div className="button-group">
-            <button 
-              className="primary-btn basecamp-btn" 
+            <button
+              className="primary-btn basecamp-btn"
               onClick={handleConnect}
-              disabled={!clientId.trim() || !clientSecret.trim() || !redirectUri.trim() || connecting}
+              disabled={connecting}
             >
               Connect to Basecamp
             </button>

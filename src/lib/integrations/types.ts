@@ -110,10 +110,15 @@ export interface FizzyCredentials {
 export type BasecampDestinationType = 'todo' | 'card'
 
 export interface BasecampCredentials {
-  /** OAuth Client ID from launchpad.37signals.com */
-  clientId: string
-  /** OAuth Client Secret from launchpad.37signals.com */
-  clientSecret: string
+  /**
+   * OAuth Client ID overriding the built-in app. Absent for connections made
+   * with the credentials that ship in the build (see basecamp-oauth-app.ts);
+   * present for records written before those existed, or for a user running
+   * their own Basecamp integration.
+   */
+  clientId?: string
+  /** OAuth Client Secret paired with an overriding clientId */
+  clientSecret?: string
   /** OAuth Redirect URI (defaults to chrome.identity.getRedirectURL()) */
   redirectUri?: string
   /** OAuth access token (set after successful auth) */
