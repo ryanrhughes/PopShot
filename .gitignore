@@ -30,3 +30,6 @@ npm-debug.log*
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Release artifact
+popshot.zip
