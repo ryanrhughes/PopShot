@@ -57,7 +57,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action === 'apiRequest') {
     handleApiRequest(message)
       .then((result) => {
-        sendResponse({ success: true, data: result.data, location: result.location })
+        // headers must be forwarded: fetchAllPages reads the rel="next" Link
+        // header to walk paginated collections, and dropping it silently
+        // truncated every list to the first page of 15.
+        sendResponse({
+          success: true,
+          data: result.data,
+          location: result.location,
+          headers: result.headers,
+        })
       })
       .catch((error) => {
         // Don't log 403 errors - these are expected for archived/inaccessible accounts
