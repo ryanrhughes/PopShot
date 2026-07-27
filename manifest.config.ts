@@ -1,6 +1,23 @@
 import { defineManifest } from '@crxjs/vite-plugin'
 
-export default defineManifest({
+/**
+ * Public key pinning the extension ID for development builds.
+ *
+ * Without a key, Chrome derives an unpacked extension's ID from its install
+ * path, so every machine and every checkout location produces a different ID -
+ * and therefore a different chromiumapp.org redirect URI. Basecamp's OAuth app
+ * registration only matches a fixed redirect URI, so the ID has to be stable
+ * across the whole team for a shared dev OAuth app to work.
+ *
+ * Production omits this: the Chrome Web Store holds the signing key that
+ * determines the published ID.
+ */
+const DEV_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwKjfRI2hhcQYOjaFw1AIMJhWUM8oOCJtBXYHme/PL2OC+Xtphlm/FdlR/b8K7GuC43WQpOmqEoGpThQLi2ob8tzJR7TzHQy4ELxV0VT4mHOCKFVZHU1wWR5kbAPB+blg4nMeRWlwOerXkrUMOStSEmc4imhC5df5Q1PTrJ0VuuIug3qfyMbN98aVVRROAl5kywRwQ791LmUk2AKBN/lWP0XDDZ5mYiBJHO1+UNGUTz9aM9rV37oXp9aIel49Acey2mnZIFkn75I5g/UrfDKmUArVy2pQZNKpXRHSfgLu+0VRCtgJGtpa+719fCm1r7QsHtswmA5acfnPgpaVu28oKQIDAQAB'
+
+export const buildManifest = (mode: string) => defineManifest({
+  ...(mode === 'production' ? {} : { key: DEV_KEY }),
+
   manifest_version: 3,
   name: 'PopShot',
   description: 'Capture, annotate, and send screenshot feedback to Fizzy or Basecamp',
@@ -77,3 +94,5 @@ export default defineManifest({
     ],
   },
 })
+
+export default buildManifest

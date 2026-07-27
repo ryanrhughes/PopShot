@@ -1,13 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { crx } from '@crxjs/vite-plugin'
-import manifest from './manifest.config'
+import { buildManifest } from './manifest.config'
 import { resolve } from 'path'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
-    crx({ manifest }),
+    crx({ manifest: buildManifest(mode) }),
   ],
   resolve: {
     alias: {
@@ -24,4 +24,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))
