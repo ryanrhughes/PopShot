@@ -19,6 +19,9 @@ const validCredentials = {
       accountId: '12345',
       accountName: 'Test Account',
       apiBaseUrl: 'https://3.basecampapi.com/12345',
+      accounts: [
+        { id: '12345', name: 'Test Account', apiBaseUrl: 'https://3.basecampapi.com/12345' },
+      ],
       // Far future so no pre-emptive refresh fires.
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       destinationType: 'todo' as const,
@@ -299,6 +302,7 @@ describe('BasecampIntegration auth error handling', () => {
       const integration = new BasecampIntegration()
       const subs = await integration.getSubDestinations(
         '42',
+        '12345',
         'https://example/card_tables/200.json'
       )
 
@@ -513,5 +517,207 @@ describe('BasecampIntegration proactive refresh', () => {
       integration: 'basecamp',
       code: 'session_expired',
     })
+  })
+})
+
+describe('BasecampIntegration multi-account', () => {
+  const baseBasecamp = validCredentials.integrationCredentials.basecamp
+
+  const multiAccountCredentials = {
+    integrationCredentials: {
+      basecamp: {
+        ...baseBasecamp,
+        accounts: [
+          { id: '12345', name: 'Oodle', apiBaseUrl: 'https://3.basecampapi.com/12345' },
+          { id: '67890', name: 'Acme', apiBaseUrl: 'https://3.basecampapi.com/67890' },
+        ],
+      },
+    },
+  }
+
+  beforeEach(() => {
+    resetAllMocks()
+  })
+
+  afterEach(() => {
+    setMessageHandler(null)
+  })
+
+  it('merges destinations from every connected account, tagged with their account', async () => {
+    setMockStorage(multiAccountCredentials)
+    setMessageHandler((message) => {
+      const { url } = message as { url: string }
+      if (url.includes('/12345/projects.json')) {
+        return {
+          success: true,
+          data: [{ id: 1, name: 'Website', status: 'active', dock: [], app_url: '' }],
+        }
+      }
+      if (url.includes('/67890/projects.json')) {
+        return {
+          success: true,
+          data: [{ id: 2, name: 'Mobile App', status: 'active', dock: [], app_url: '' }],
+        }
+      }
+      return { success: false, status: 404, error: `unexpected request: ${url}` }
+    })
+
+    const integration = new BasecampIntegration()
+    const destinations = await integration.getDestinations()
+
+    expect(destinations.map(d => [d.name, d.accountId, d.accountName])).toEqual([
+      ['Website', '12345', 'Oodle'],
+      ['Mobile App', '67890', 'Acme'],
+    ])
+  })
+
+  it('still returns the reachable accounts when one account fails', async () => {
+    setMockStorage(multiAccountCredentials)
+    setMessageHandler((message) => {
+      const { url } = message as { url: string }
+      if (url.includes('/12345/projects.json')) {
+        return { success: false, status: 403, error: 'Account suspended' }
+      }
+      if (url.includes('/67890/projects.json')) {
+        return {
+          success: true,
+          data: [{ id: 2, name: 'Mobile App', status: 'active', dock: [], app_url: '' }],
+        }
+      }
+      return { success: false, status: 404, error: `unexpected request: ${url}` }
+    })
+
+    const integration = new BasecampIntegration()
+    const destinations = await integration.getDestinations()
+
+    expect(destinations.map(d => d.accountName)).toEqual(['Acme'])
+  })
+
+  it('upgrades a legacy single-account record by discovering accounts from launchpad', async () => {
+    // Records written before multi-account support have no `accounts` list.
+    const { accounts: _ignored, ...legacyBasecamp } = baseBasecamp
+    setMockStorage({ integrationCredentials: { basecamp: legacyBasecamp } })
+
+    const calls: string[] = []
+    setMessageHandler((message) => {
+      const { url } = message as { url: string }
+      calls.push(url)
+      if (url.includes('/authorization.json')) {
+        return {
+          success: true,
+          data: {
+            expires_at: '2099-01-01T00:00:00Z',
+            identity: { id: 1, first_name: 'T', last_name: 'U', email_address: 't@u.io' },
+            accounts: [
+              { product: 'bc3', id: 12345, name: 'Oodle', href: 'https://3.basecampapi.com/12345', app_href: '' },
+              { product: 'campfire', id: 555, name: 'Old Chat', href: '', app_href: '' },
+              { product: 'bc3', id: 67890, name: 'Acme', href: 'https://3.basecampapi.com/67890', app_href: '' },
+            ],
+          },
+        }
+      }
+      if (url.includes('/projects.json')) {
+        return { success: true, data: [] }
+      }
+      return { success: false, status: 404, error: `unexpected request: ${url}` }
+    })
+
+    const integration = new BasecampIntegration()
+    await integration.getDestinations()
+
+    // Both bc3 accounts were queried; the campfire account was ignored.
+    expect(calls.some(url => url.includes('/12345/projects.json'))).toBe(true)
+    expect(calls.some(url => url.includes('/67890/projects.json'))).toBe(true)
+    expect(calls.some(url => url.includes('/555/'))).toBe(false)
+
+    // The discovered list was persisted so the next load skips discovery.
+    const stored = getMockStorage() as {
+      integrationCredentials: { basecamp: { accounts?: { id: string; name: string }[] } }
+    }
+    expect(stored.integrationCredentials.basecamp.accounts).toEqual([
+      { id: '12345', name: 'Oodle', apiBaseUrl: 'https://3.basecampapi.com/12345' },
+      { id: '67890', name: 'Acme', apiBaseUrl: 'https://3.basecampapi.com/67890' },
+    ])
+  })
+
+  it('routes sub-destination lookups to the requested account', async () => {
+    setMockStorage(multiAccountCredentials)
+
+    const calls: string[] = []
+    setMessageHandler((message) => {
+      const { url } = message as { url: string }
+      calls.push(url)
+      if (url.includes('/67890/projects/7.json')) {
+        return {
+          success: true,
+          data: {
+            id: 7,
+            name: 'Mobile App',
+            status: 'active',
+            app_url: '',
+            dock: [
+              {
+                name: 'todoset',
+                enabled: true,
+                url: 'https://3.basecampapi.com/67890/buckets/7/todosets/1.json',
+              },
+            ],
+          },
+        }
+      }
+      if (url.includes('/67890/buckets/7/todosets/1.json')) {
+        return {
+          success: true,
+          data: { todolists_url: 'https://3.basecampapi.com/67890/buckets/7/todosets/1/todolists.json' },
+        }
+      }
+      if (url.includes('/67890/buckets/7/todosets/1/todolists.json')) {
+        return { success: true, data: [{ id: 11, title: 'Bugs', app_url: '' }] }
+      }
+      return { success: false, status: 404, error: `unexpected request: ${url}` }
+    })
+
+    const integration = new BasecampIntegration()
+    const subDestinations = await integration.getSubDestinations('7', '67890')
+
+    expect(subDestinations.map(s => s.name)).toEqual(['Bugs'])
+    expect(calls.every(url => url.includes('/67890/'))).toBe(true)
+  })
+
+  it('submits the report (upload + create) to the account of the selected destination', async () => {
+    setMockStorage(multiAccountCredentials)
+
+    const calls: string[] = []
+    setMessageHandler((message) => {
+      const { url } = message as { url: string }
+      calls.push(url)
+      if (url.includes('/attachments.json')) {
+        return {
+          success: true,
+          data: { attachable_sgid: 'sgid-1', filename: 'shot.png', content_type: 'image/png' },
+        }
+      }
+      if (url.includes('/todolists/11/todos.json')) {
+        return { success: true, data: { id: 99, app_url: 'https://bc.example/todo/99', content: 'Bug title' } }
+      }
+      return { success: false, status: 404, error: `unexpected request: ${url}` }
+    })
+
+    const integration = new BasecampIntegration()
+    const result = await integration.submitReport({
+      title: 'Bug title',
+      description: 'It broke',
+      imageDataUrl: 'data:image/png;base64,AAAA',
+      destinationId: '7',
+      accountId: '67890',
+      subDestinationId: '11',
+      metadataHtml: '',
+    })
+
+    expect(result.id).toBe('99')
+    expect(calls.length).toBeGreaterThan(0)
+    // Every API call - the upload and the to-do creation - must target the
+    // account the picked destination belongs to, not the default account.
+    expect(calls.every(url => url.includes('/67890/'))).toBe(true)
   })
 })

@@ -19,7 +19,9 @@ import {
 
 interface DestinationSelectorProps {
   integrationType: IntegrationType | null
-  onSelect: (destination: Destination, subDestination?: SubDestination) => void
+  /** Called with null when the current selection is cleared (e.g. the account
+      filter hides it), so the parent can't submit to an invisible project. */
+  onSelect: (destination: Destination | null, subDestination?: SubDestination) => void
   disabled?: boolean
   /** Reserved for future use - auto-select destination based on URL */
   currentUrl?: string
@@ -40,6 +42,9 @@ export function DestinationSelector({
   const [subDestinations, setSubDestinations] = useState<SubDestination[]>([])
   const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null)
   const [selectedSubDestination, setSelectedSubDestination] = useState<SubDestination | null>(null)
+  // Account filter for the project list - purely a view aid for people in
+  // many accounts; 'all' shows everything grouped by account.
+  const [accountFilter, setAccountFilter] = useState<string>('all')
   const [loading, setLoading] = useState(false)
   const [loadingSub, setLoadingSub] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -96,9 +101,9 @@ export function DestinationSelector({
     if (selectedDestination && requiresSubDestination) {
       if (integrationType === 'basecamp') {
         // For Basecamp, check which types are available first
-        checkBasecampAvailability(selectedDestination.id)
+        checkBasecampAvailability(selectedDestination.id, selectedDestination.accountId)
       } else {
-        loadSubDestinations(selectedDestination.id)
+        loadSubDestinations(selectedDestination.id, selectedDestination.accountId)
       }
     } else {
       setSubDestinations([])
@@ -114,6 +119,8 @@ export function DestinationSelector({
       } else if (!requiresSubDestination) {
         onSelect(selectedDestination)
       }
+    } else {
+      onSelect(null)
     }
   }, [selectedDestination, selectedSubDestination, requiresSubDestination])
 
@@ -126,6 +133,7 @@ export function DestinationSelector({
     setErrorStatus(null)
     setBasecampAuthError(null)
     setDestinations([])
+    setAccountFilter('all')
     setSelectedDestination(null)
     setSubDestinations([])
     setSelectedSubDestination(null)
@@ -154,7 +162,13 @@ export function DestinationSelector({
       const lastUsed = await getLastUsedDestination(integrationType, currentUrl)
       if (!isDestinationFetchCurrent(destinationFetchId)) return
       if (lastUsed) {
-        const lastDest = dests.find(d => d.id === lastUsed.destinationId)
+        // Match on account too - with destinations spanning multiple accounts,
+        // an id alone could pick a same-id project in the wrong account.
+        const lastDest = dests.find(
+          d =>
+            d.id === lastUsed.destinationId &&
+            (!lastUsed.accountId || d.accountId === lastUsed.accountId)
+        )
         if (lastDest) {
           setSelectedDestination(lastDest)
           return // loadSubDestinations will be triggered by useEffect
@@ -189,7 +203,7 @@ export function DestinationSelector({
   // the proactive refresh and, if that fails, surfaces as an IntegrationError
   // the UI can render as a reconnect banner - rather than the old behavior
   // of swallowing every failure as "no destinations available".
-  const checkBasecampAvailability = async (projectId: string) => {
+  const checkBasecampAvailability = async (projectId: string, accountId?: string) => {
     // Child loader: inherits the generation its caller (the project-change
     // handler or loadDestinations) already started. It observes rather than
     // begins so the caller's `finally` guard still runs.
@@ -206,7 +220,7 @@ export function DestinationSelector({
 
     try {
       const { hasTodoLists: hasTodos, hasCardColumns: hasCards } =
-        await basecampIntegration.getProjectAvailability(projectId)
+        await basecampIntegration.getProjectAvailability(projectId, accountId)
       if (!isDestinationFetchCurrent(destinationFetchId)) return
 
       setHasTodoLists(hasTodos)
@@ -232,9 +246,9 @@ export function DestinationSelector({
 
       // Now load the appropriate sub-destinations
       if (effectiveType === 'card' && hasCards) {
-        loadCardTables(projectId)
+        loadCardTables(projectId, accountId)
       } else if (effectiveType === 'todo' && hasTodos) {
-        loadSubDestinations(projectId)
+        loadSubDestinations(projectId, accountId)
       }
     } catch (err) {
       if (!isDestinationFetchCurrent(destinationFetchId)) return
@@ -258,7 +272,7 @@ export function DestinationSelector({
   // Basecamp card mode: list the project's card tables (a project can host
   // more than one, e.g. a primary board plus an Internal QA board). Auto-
   // selects when there's only one, or when the user's last pick still exists.
-  const loadCardTables = async (projectId: string) => {
+  const loadCardTables = async (projectId: string, accountId?: string) => {
     // Child loader - see checkBasecampAvailability comment; inherits the
     // caller's generation instead of starting a new one.
     const destinationFetchId = activeDestinationFetchIdRef.current
@@ -269,7 +283,7 @@ export function DestinationSelector({
     setSelectedSubDestination(null)
 
     try {
-      const tables = await basecampIntegration.getProjectCardTables(projectId)
+      const tables = await basecampIntegration.getProjectCardTables(projectId, accountId)
       if (!isDestinationFetchCurrent(destinationFetchId)) return
       setCardTables(tables)
 
@@ -288,7 +302,7 @@ export function DestinationSelector({
       const pick = restored || (tables.length === 1 ? tables[0] : null)
       if (pick) {
         setSelectedCardTable(pick)
-        loadSubDestinations(projectId, pick)
+        loadSubDestinations(projectId, accountId, pick)
       }
     } catch (err) {
       if (!isDestinationFetchCurrent(destinationFetchId)) return
@@ -311,6 +325,7 @@ export function DestinationSelector({
 
   const loadSubDestinations = async (
     destinationId: string,
+    accountId?: string,
     cardTable?: BasecampCardTableRef
   ) => {
     if (!integrationType) return
@@ -329,8 +344,8 @@ export function DestinationSelector({
       // integrations and todo mode ignore the extra argument.
       const fetchedSubDestinations =
         integrationType === 'basecamp' && cardTable
-          ? await basecampIntegration.getSubDestinations(destinationId, cardTable.url)
-          : await integration.getSubDestinations(destinationId)
+          ? await basecampIntegration.getSubDestinations(destinationId, accountId, cardTable.url)
+          : await integration.getSubDestinations(destinationId, accountId)
       if (!isDestinationFetchCurrent(destinationFetchId)) return
       setSubDestinations(fetchedSubDestinations)
 
@@ -371,6 +386,22 @@ export function DestinationSelector({
       if (isDestinationFetchCurrent(destinationFetchId)) {
         setLoadingSub(false)
       }
+    }
+  }
+
+  const handleAccountFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value
+    setAccountFilter(value)
+
+    // Deselect a project the new filter hides - keeping an invisible selection
+    // would let the form submit to a project the user can no longer see.
+    if (value !== 'all' && selectedDestination && selectedDestination.accountId !== value) {
+      beginDestinationFetchGeneration()
+      setSelectedDestination(null)
+      setSubDestinations([])
+      setSelectedSubDestination(null)
+      setCardTables([])
+      setSelectedCardTable(null)
     }
   }
 
@@ -434,7 +465,7 @@ export function DestinationSelector({
         table.id.toString()
       )
 
-      loadSubDestinations(selectedDestination.id, table)
+      loadSubDestinations(selectedDestination.id, selectedDestination.accountId, table)
     }
   }
 
@@ -466,9 +497,9 @@ export function DestinationSelector({
     // Reload sub-destinations with new type
     if (selectedDestination) {
       if (newType === 'card') {
-        loadCardTables(selectedDestination.id)
+        loadCardTables(selectedDestination.id, selectedDestination.accountId)
       } else {
-        loadSubDestinations(selectedDestination.id)
+        loadSubDestinations(selectedDestination.id, selectedDestination.accountId)
       }
     }
   }
@@ -522,8 +553,19 @@ export function DestinationSelector({
     ? (basecampDestinationType === 'card' ? 'Column' : 'To-do List')
     : 'Sub-destination'
 
+  // Every account represented in the destinations, in first-seen order
+  const accountOptions = Array.from(
+    new Map(destinations.map(d => [d.accountId, d.accountName || 'Default'])).entries()
+  )
+  const showAccountFilter = accountOptions.length > 1
+
+  const visibleDestinations =
+    accountFilter === 'all'
+      ? destinations
+      : destinations.filter(d => d.accountId === accountFilter)
+
   // Group destinations by account
-  const groupedDestinations = destinations.reduce((acc, dest) => {
+  const groupedDestinations = visibleDestinations.reduce((acc, dest) => {
     const key = dest.accountName || 'Default'
     if (!acc[key]) acc[key] = []
     acc[key].push(dest)
@@ -534,12 +576,30 @@ export function DestinationSelector({
 
   return (
     <div className="destination-selector">
+      {showAccountFilter && (
+        <div className="form-group">
+          <label>Account</label>
+          <select
+            value={accountFilter}
+            onChange={handleAccountFilterChange}
+            disabled={disabled}
+          >
+            <option value="all">All accounts</option>
+            {accountOptions.map(([accountId, accountName]) => (
+              <option key={accountId} value={accountId}>
+                {accountName}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="form-group">
         <label>{destinationLabel} *</label>
         <select
           value={selectedDestination?.id || ''}
           onChange={handleDestinationChange}
-          disabled={disabled || destinations.length === 0}
+          disabled={disabled || visibleDestinations.length === 0}
         >
           <option value="">Select {destinationLabel.toLowerCase()}...</option>
           {hasMultipleAccounts ? (
@@ -553,7 +613,7 @@ export function DestinationSelector({
               </optgroup>
             ))
           ) : (
-            destinations.map((dest) => (
+            visibleDestinations.map((dest) => (
               <option key={dest.id} value={dest.id}>
                 {dest.name}
               </option>

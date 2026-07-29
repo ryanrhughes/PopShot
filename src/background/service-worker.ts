@@ -690,11 +690,18 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
 
   const authData: BasecampAuthorizationResponse = await authResponse.json()
 
-  // Find a Basecamp 3 account (bc3)
-  const bc3Account = authData.accounts.find(a => a.product === 'bc3')
-  if (!bc3Account) {
+  // Every Basecamp 3 (bc3) account the authorization grants - the project
+  // picker offers all of them, so a user in multiple accounts isn't silently
+  // locked to whichever one launchpad listed first.
+  const bc3Accounts = authData.accounts.filter(a => a.product === 'bc3')
+  if (bc3Accounts.length === 0) {
     throw new Error('No Basecamp 3 account found. PopShot requires Basecamp 3.')
   }
+  const accounts = bc3Accounts.map(a => ({
+    id: String(a.id),
+    name: a.name,
+    apiBaseUrl: a.href,
+  }))
 
   // Calculate expiration time
   const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
@@ -705,14 +712,17 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
   // or environment-switched secret would never take effect. Spreading the
   // existing record preserves a genuine user-supplied override (and the
   // credentials of anyone who connected before the built-in app existed).
+  // The single-account fields stay populated as the default for callers that
+  // don't specify an account.
   const credentials = {
     ...(integrationCredentials?.basecamp ?? {}),
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     expiresAt,
-    accountId: String(bc3Account.id),
-    accountName: bc3Account.name,
-    apiBaseUrl: bc3Account.href,
+    accounts,
+    accountId: accounts[0].id,
+    accountName: accounts[0].name,
+    apiBaseUrl: accounts[0].apiBaseUrl,
   }
 
   await chrome.storage.local.set({
@@ -722,7 +732,7 @@ async function handleBasecampOAuthExchange(code: string, redirectUri: string): P
     },
   })
 
-  return { accountName: bc3Account.name }
+  return { accountName: accounts.map(a => a.name).join(', ') }
 }
 
 // ============================================================================

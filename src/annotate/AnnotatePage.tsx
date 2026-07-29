@@ -1120,8 +1120,9 @@ export function AnnotatePage() {
                 integrationType={selectedIntegration}
                 currentUrl={metadata?.url}
                 onSelect={(dest, subDest) => {
-                  // Clear tags when destination changes
-                  if (selectedDestination?.id !== dest.id) {
+                  // Clear tags when destination changes (or is cleared, e.g.
+                  // by the account filter hiding the selected project)
+                  if (selectedDestination?.id !== dest?.id) {
                     setSelectedTagIds([])
                   }
                   setSelectedDestination(dest)

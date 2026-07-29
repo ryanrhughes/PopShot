@@ -87,24 +87,41 @@ different redirect URI. `manifest.config.ts` injects a fixed public key for
 non-production builds, giving every developer the same ID. Production omits it -
 the Web Store holds the signing key.
 
-#### Building for local development
+#### How the right credentials are chosen
 
-Use a **development** build. Vite's mode selects both the manifest key and the
-credentials, so they can never disagree:
+The OAuth app is selected at **runtime** from `chrome.runtime.id` (see
+`resolveOAuthApp` in `src/lib/basecamp-oauth-app.ts`): whatever identity Chrome
+gave the install picks the app registered against that identity. Since the
+redirect URI is also derived from the runtime ID, the two can never disagree.
+An install whose ID matches neither registration (e.g. a production build
+loaded unpacked, which has no pinned key and gets a path-derived ID) fails
+fast with an error explaining exactly that, instead of Launchpad's opaque
+authorization error.
+
+#### Building for local development
 
 ```bash
 npm run dev        # watch + HMR, keeps dist/ updated (preferred)
 npm run build:dev  # one-shot development build
 ```
 
-`npm run build` and `npm run release` are production-only. Loading a production
-build locally pairs production credentials with the development extension ID and
-authorization fails.
+Build outputs are separated by mode so a release build can never poison the
+load-unpacked folder:
+
+| Command | Mode | Output | Manifest key |
+|---|---|---|---|
+| `npm run dev` / `npm run build:dev` | development | `dist/` | pinned dev key |
+| `npm run build` / `npm run release` | production | `dist-release/` | none (Web Store signs) |
+
+`dist/` is the only folder you ever Load unpacked, and only development builds
+write to it.
 
 #### Troubleshooting
 
-**"Authorization page could not be loaded"** - the client id and redirect URI
-disagree, almost always because `dist/` holds a production build. Check with:
+**"Authorization page could not be loaded" or an extension-ID mismatch error** -
+the install's ID matches neither OAuth registration. Rebuild with
+`npm run build:dev` and reload from `dist/`. Verify the manifest carries the
+pinned key:
 
 ```bash
 node -e "console.log(!!require('./dist/manifest.json').key)"   # true = dev build
@@ -229,15 +246,14 @@ This is expected - it's logged when the Chrome mock simulates API errors. The te
 ### Changes not reflecting
 
 1. Make sure `npm run dev` is running (for development)
-2. Or run `npm run build` and reload the extension
+2. Or run `npm run build:dev` and reload the extension
 
 ## Publishing
 
-1. Update version in `manifest.config.ts`
-2. Run `npm run build`
-3. Zip the `dist` folder
-4. Upload to Chrome Web Store
+1. Update version in `manifest.config.ts` and `package.json`
+2. Run `npm run release` - builds production into `dist-release/` and zips it
+   into `popshot.zip`
+3. Upload `popshot.zip` to the Chrome Web Store
 
-Before publishing with Basecamp support:
-- Ensure the published extension's redirect URI is registered in Basecamp
-- Consider hardcoding OAuth credentials for seamless user experience
+The production OAuth app is already registered against the Web Store extension
+ID; nothing OAuth-related needs configuring per release.

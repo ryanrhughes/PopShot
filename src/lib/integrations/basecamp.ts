@@ -13,10 +13,12 @@ import type {
   BugReport,
   SubmissionResult,
   BasecampDestinationType,
+  BasecampStoredAccount,
 } from './types'
 import { IntegrationError } from './types'
 import {
   validateAccessToken,
+  getAuthorization,
   getProjects,
   getProjectTodoLists,
   getProjectCardColumns,
@@ -94,16 +96,44 @@ export class BasecampIntegration implements Integration {
   }
 
   /**
-   * Get all projects as destinations
+   * Get all active projects across every account the authorization grants
+   * access to. The UI groups destinations by accountName when there is more
+   * than one account.
    */
   async getDestinations(): Promise<Destination[]> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId, accountName } = await this.getCredentials()
-      const projects = await getProjects(accessToken, accountId)
+      const { accessToken } = await this.getCredentials()
+      const accounts = await this.getAccounts(accessToken)
 
-      return projects
-        .filter(project => project.status === 'active')
-        .map(project => this.projectToDestination(project, accountId, accountName))
+      const results = await Promise.allSettled(
+        accounts.map(async account => {
+          const accountId = parseInt(account.id, 10)
+          const projects = await getProjects(accessToken, accountId)
+          return projects
+            .filter(project => project.status === 'active')
+            .map(project => this.projectToDestination(project, accountId, account.name))
+        })
+      )
+
+      // One dead account (suspended, downgraded) shouldn't brick the picker
+      // for the rest - but if every account failed, surface the first error
+      // so auth failures still route to the reconnect banner.
+      const fulfilled = results.filter(
+        (r): r is PromiseFulfilledResult<Destination[]> => r.status === 'fulfilled'
+      )
+      if (fulfilled.length === 0 && results.length > 0) {
+        throw (results[0] as PromiseRejectedResult).reason
+      }
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          console.warn(
+            `[Basecamp] Skipping account "${accounts[i].name}" (${accounts[i].id}):`,
+            result.reason
+          )
+        }
+      })
+
+      return fulfilled.flatMap(r => r.value)
     })
   }
 
@@ -116,24 +146,27 @@ export class BasecampIntegration implements Integration {
    */
   async getSubDestinations(
     projectId: string,
+    accountId?: string,
     cardTableUrl?: string
   ): Promise<SubDestination[]> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId, destinationType } = await this.getCredentials()
+      const { accessToken, accountId: defaultAccountId, destinationType } =
+        await this.getCredentials()
+      const resolvedAccountId = this.resolveAccountId(accountId, defaultAccountId)
       const projectIdNum = parseInt(projectId, 10)
 
       if (destinationType === 'card') {
         // Get card table columns
         const columns = await getProjectCardColumns(
           accessToken,
-          accountId,
+          resolvedAccountId,
           projectIdNum,
           cardTableUrl
         )
         return columns.map(col => this.cardColumnToSubDestination(col, projectId))
       } else {
         // Default to to-do lists
-        const todoLists = await getProjectTodoLists(accessToken, accountId, projectIdNum)
+        const todoLists = await getProjectTodoLists(accessToken, resolvedAccountId, projectIdNum)
         return todoLists.map(list => this.todoListToSubDestination(list, projectId))
       }
     })
@@ -146,11 +179,15 @@ export class BasecampIntegration implements Integration {
    * project dock - Kanban::Board is not a supported Recordings type, so the
    * dock is the only reliable listing surface.
    */
-  async getProjectCardTables(projectId: string): Promise<BasecampCardTableRef[]> {
+  async getProjectCardTables(
+    projectId: string,
+    accountId?: string
+  ): Promise<BasecampCardTableRef[]> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId } = await this.getCredentials()
+      const { accessToken, accountId: defaultAccountId } = await this.getCredentials()
+      const resolvedAccountId = this.resolveAccountId(accountId, defaultAccountId)
       const projectIdNum = parseInt(projectId, 10)
-      return getProjectCardTables(accessToken, accountId, projectIdNum)
+      return getProjectCardTables(accessToken, resolvedAccountId, projectIdNum)
     })
   }
 
@@ -164,17 +201,21 @@ export class BasecampIntegration implements Integration {
    * Both lookups succeed-or-fail together; per-call swallowing (the old
    * pattern) masked auth/server errors as "no destinations available".
    */
-  async getProjectAvailability(projectId: string): Promise<{
+  async getProjectAvailability(
+    projectId: string,
+    accountId?: string
+  ): Promise<{
     hasTodoLists: boolean
     hasCardColumns: boolean
   }> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId } = await this.getCredentials()
+      const { accessToken, accountId: defaultAccountId } = await this.getCredentials()
+      const resolvedAccountId = this.resolveAccountId(accountId, defaultAccountId)
       const projectIdNum = parseInt(projectId, 10)
 
       const [todoLists, cardColumns] = await Promise.all([
-        getProjectTodoLists(accessToken, accountId, projectIdNum),
-        getProjectCardColumns(accessToken, accountId, projectIdNum),
+        getProjectTodoLists(accessToken, resolvedAccountId, projectIdNum),
+        getProjectCardColumns(accessToken, resolvedAccountId, projectIdNum),
       ])
 
       return {
@@ -206,11 +247,18 @@ export class BasecampIntegration implements Integration {
   }
 
   /**
-   * Upload an image to Basecamp
+   * Upload an image to Basecamp (attachments are account-scoped, so the
+   * account must match the project the sgid will be embedded in). Without an
+   * accountId this targets the default account.
    */
-  async uploadImage(imageDataUrl: string, filename: string): Promise<UploadResult> {
+  async uploadImage(
+    imageDataUrl: string,
+    filename: string,
+    accountId?: string
+  ): Promise<UploadResult> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId } = await this.getCredentials()
+      const { accessToken, accountId: defaultAccountId } = await this.getCredentials()
+      const resolvedAccountId = this.resolveAccountId(accountId, defaultAccountId)
 
       // Convert data URL to binary
       const { buffer, mimeType } = dataUrlToArrayBuffer(imageDataUrl)
@@ -218,7 +266,7 @@ export class BasecampIntegration implements Integration {
       // Upload the attachment
       const attachment = await uploadAttachment(
         accessToken,
-        accountId,
+        resolvedAccountId,
         filename,
         mimeType,
         buffer
@@ -233,11 +281,14 @@ export class BasecampIntegration implements Integration {
   }
 
   /**
-   * Submit a bug report to Basecamp as a to-do or card
+   * Submit a bug report to Basecamp as a to-do or card, in the account the
+   * selected destination belongs to (report.accountId).
    */
   async submitReport(report: BugReport): Promise<SubmissionResult> {
     return this.withAuthErrorHandling(async () => {
-      const { accessToken, accountId, destinationType } = await this.getCredentials()
+      const { accessToken, accountId: defaultAccountId, destinationType } =
+        await this.getCredentials()
+      const accountId = this.resolveAccountId(report.accountId, defaultAccountId)
 
       if (!report.subDestinationId) {
         const itemType = destinationType === 'card' ? 'card table column' : 'to-do list'
@@ -251,7 +302,7 @@ export class BasecampIntegration implements Integration {
 
       // Upload the image first
       const filename = `screenshot-${Date.now()}.png`
-      const upload = await this.uploadImage(report.imageDataUrl, filename)
+      const upload = await this.uploadImage(report.imageDataUrl, filename, report.accountId)
 
       // Build the content with description (which already includes metadata) and embedded image
       // Note: report.description already contains metadataHtml from the AnnotatePage
@@ -297,6 +348,53 @@ ${this.getImageEmbedHtml(upload)}
   }
 
   // ============ Private helpers ============
+
+  /**
+   * Numeric account id for an API call. UI surfaces pass the account of the
+   * destination the user picked (Destination.accountId / BugReport.accountId);
+   * callers that don't specify one get the default stored account, which keeps
+   * single-account installs and legacy call sites working unchanged.
+   */
+  private resolveAccountId(requested: string | undefined, fallback: number): number {
+    const parsed = requested ? parseInt(requested, 10) : NaN
+    return Number.isNaN(parsed) ? fallback : parsed
+  }
+
+  /**
+   * The bc3 accounts this authorization can reach. Prefers the list stored at
+   * connect time; records written before multi-account support hold only the
+   * first account, so those are upgraded in place by asking launchpad - the
+   * token already grants every account, no reconnect needed.
+   */
+  private async getAccounts(accessToken: string): Promise<BasecampStoredAccount[]> {
+    const credentials = await getIntegrationCredentials()
+    const bc = credentials.basecamp
+    if (bc?.accounts?.length) {
+      return bc.accounts
+    }
+
+    const auth = await getAuthorization(accessToken)
+    const discovered: BasecampStoredAccount[] = auth.accounts
+      .filter(account => account.product === 'bc3')
+      .map(account => ({
+        id: account.id.toString(),
+        name: account.name,
+        apiBaseUrl: account.href,
+      }))
+
+    if (discovered.length > 0) {
+      if (bc) {
+        await setBasecampCredentials({ ...bc, accounts: discovered })
+      }
+      return discovered
+    }
+
+    // Shouldn't happen (connecting requires a bc3 account), but fall back to
+    // the stored single account rather than an empty picker.
+    return bc?.accountId && bc.accountName && bc.apiBaseUrl
+      ? [{ id: bc.accountId, name: bc.accountName, apiBaseUrl: bc.apiBaseUrl }]
+      : []
+  }
 
   /**
    * Run a Basecamp API call and convert 401 responses (e.g. "OAuth token
