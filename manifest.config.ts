@@ -21,7 +21,7 @@ export const buildManifest = (mode: string) => defineManifest({
   manifest_version: 3,
   name: 'PopShot',
   description: 'Capture, annotate, and send screenshot feedback to Fizzy or Basecamp',
-  version: '0.4.0',
+  version: '0.5.0',
   
   // Extension icon
   icons: {
