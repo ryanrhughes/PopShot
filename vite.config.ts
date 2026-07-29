@@ -15,6 +15,10 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    // dist/ is the load-unpacked folder and only ever receives dev-keyed
+    // builds; production builds (no dev key, Web Store credentials) go to
+    // dist-release/ so they can't silently break the unpacked workflow.
+    outDir: mode === 'production' ? 'dist-release' : 'dist',
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),

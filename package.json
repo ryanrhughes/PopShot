@@ -12,7 +12,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "release": "vitest run && tsc && vite build && cd dist && zip -r ../popshot.zip . && cd .. && echo '\nRelease built: popshot.zip'"
+    "release": "vitest run && tsc && vite build && cd dist-release && zip -r ../popshot.zip . && cd .. && echo '\nRelease built: popshot.zip'"
   },
   "dependencies": {
     "fabric": "^6.9.1",

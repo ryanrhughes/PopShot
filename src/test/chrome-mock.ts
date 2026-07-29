@@ -47,6 +47,9 @@ export const chromeMock = {
     },
   },
   runtime: {
+    // Mutable so tests can simulate the production, development, or an
+    // unregistered extension ID (see basecamp-oauth-app.test.ts).
+    id: 'mock-extension-id',
     sendMessage: vi.fn(async (message: unknown) => {
       if (messageHandler) {
         return messageHandler(message)
@@ -62,6 +65,10 @@ export const chromeMock = {
     },
     getURL: vi.fn((path: string) => `chrome-extension://mock-id/${path}`),
     openOptionsPage: vi.fn(async () => {}),
+  },
+  identity: {
+    getRedirectURL: vi.fn(() => `https://${chromeMock.runtime.id}.chromiumapp.org/`),
+    launchWebAuthFlow: vi.fn(async () => undefined),
   },
   tabs: {
     query: vi.fn(async () => []),
