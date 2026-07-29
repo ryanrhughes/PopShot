@@ -109,6 +109,14 @@ export interface FizzyCredentials {
  */
 export type BasecampDestinationType = 'todo' | 'card'
 
+/** A Basecamp account (workspace) reachable with the stored authorization. */
+export interface BasecampStoredAccount {
+  id: string
+  name: string
+  /** The API base URL for this account */
+  apiBaseUrl: string
+}
+
 export interface BasecampCredentials {
   /**
    * OAuth Client ID overriding the built-in app. Absent for connections made
@@ -127,11 +135,17 @@ export interface BasecampCredentials {
   refreshToken?: string
   /** ISO date string when the access token expires */
   expiresAt?: string
-  /** The Basecamp account ID */
+  /**
+   * Every Basecamp 3 account the authorization grants access to. Records
+   * written before multi-account support lack this and are upgraded in place
+   * on the next destination load (see BasecampIntegration.getAccounts).
+   */
+  accounts?: BasecampStoredAccount[]
+  /** The default Basecamp account ID (the first account granted) */
   accountId?: string
-  /** The Basecamp account name */
+  /** The default Basecamp account name */
   accountName?: string
-  /** The API base URL for this account */
+  /** The API base URL for the default account */
   apiBaseUrl?: string
   /** Where to create items: 'todo' (To-do List) or 'card' (Card Table) */
   destinationType?: BasecampDestinationType
@@ -225,10 +239,12 @@ export interface Integration {
   getDestinations(): Promise<Destination[]>
   
   /**
-   * Get sub-destinations within a destination (e.g., to-do lists in a project)
-   * Returns empty array if the integration doesn't use sub-destinations
+   * Get sub-destinations within a destination (e.g., to-do lists in a project).
+   * Returns empty array if the integration doesn't use sub-destinations.
+   * `accountId` disambiguates the destination for integrations whose
+   * destinations span multiple accounts (pass Destination.accountId).
    */
-  getSubDestinations(destinationId: string): Promise<SubDestination[]>
+  getSubDestinations(destinationId: string, accountId?: string): Promise<SubDestination[]>
   
   /**
    * Get available tags/labels
@@ -247,9 +263,11 @@ export interface Integration {
   requiresSubDestination(): boolean
   
   /**
-   * Upload an image and get back an SGID for embedding
+   * Upload an image and get back an SGID for embedding. `accountId` targets a
+   * specific account for integrations with account-scoped uploads; omitted,
+   * the integration's default account is used.
    */
-  uploadImage(imageDataUrl: string, filename: string): Promise<UploadResult>
+  uploadImage(imageDataUrl: string, filename: string, accountId?: string): Promise<UploadResult>
   
   /**
    * Submit a bug report

@@ -83,7 +83,7 @@ export class FizzyIntegration implements Integration {
   /**
    * Fizzy doesn't use sub-destinations (cards go directly to boards)
    */
-  async getSubDestinations(_destinationId: string): Promise<SubDestination[]> {
+  async getSubDestinations(_destinationId: string, _accountId?: string): Promise<SubDestination[]> {
     return []
   }
 

@@ -235,6 +235,8 @@ interface BasecampSettingsProps {
     accessToken?: string
     accountName?: string
     expiresAt?: string
+    /** All connected accounts; absent on records from before multi-account support */
+    accounts?: { id: string; name: string }[]
   }
   onUpdate: () => void
 }
@@ -355,7 +357,14 @@ function BasecampSettings({ credentials, onUpdate }: BasecampSettingsProps) {
 
       {isConnected && !connecting ? (
         <div className="connected-info">
-          <p>Connected to <strong>{credentials?.accountName || 'Basecamp'}</strong></p>
+          <p>
+            Connected to{' '}
+            <strong>
+              {credentials?.accounts?.length
+                ? credentials.accounts.map(a => a.name).join(', ')
+                : credentials?.accountName || 'Basecamp'}
+            </strong>
+          </p>
           {isExpired && (
             <p className="warning-text">Your session has expired. Please reconnect.</p>
           )}
